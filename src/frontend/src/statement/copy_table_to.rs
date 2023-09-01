@@ -92,6 +92,7 @@ impl StatementExecutor {
 
         let format = Format::try_from(&req.with).context(error::ParseFileFormatSnafu)?;
 
+        let table_ref = TableReference::full(&req.catalog_name, &req.schema_name, &req.table_name);
         let df_table_ref = DfTableReference::from(table_ref);
 
         let filters = table

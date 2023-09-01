@@ -14,9 +14,11 @@
 
 use std::collections::HashMap;
 
+use common_error::ext::BoxedError;
 use common_query::Output;
 use common_recordbatch::{RecordBatch, SendableRecordBatchStream};
 use datafusion_expr::{DmlStatement, LogicalPlan as DfLogicalPlan, WriteOp};
+use datanode::instance::sql::table_idents_to_full_name;
 use datatypes::schema::SchemaRef;
 use futures_util::StreamExt;
 use query::parser::QueryStatement;
@@ -33,18 +35,35 @@ use table::TableRef;
 
 use super::StatementExecutor;
 use crate::error::{
-    BuildColumnVectorsSnafu, ExecLogicalPlanSnafu, ExecuteStatementSnafu,
+    BuildColumnVectorsSnafu, ExecLogicalPlanSnafu, ExecuteStatementSnafu, ExternalSnafu,
     MissingTimeIndexColumnSnafu, ReadRecordBatchSnafu, Result, UnexpectedSnafu,
 };
+use crate::table::insert::handle_insert_request;
 
 impl StatementExecutor {
     pub async fn insert(&self, insert: Box<Insert>, query_ctx: QueryContextRef) -> Result<Output> {
         if insert.can_extract_values() {
             // Fast path: plain insert ("insert with literal values") is executed directly
-            self.sql_stmt_executor
-                .execute_sql(Statement::Insert(insert), query_ctx)
-                .await
-                .context(ExecuteStatementSnafu)
+            let (catalog, schema, table) =
+                table_idents_to_full_name(&insert.table_name(), query_ctx.clone())
+                    .map_err(BoxedError::new)
+                    .context(ExternalSnafu)?;
+            let table_ref = TableReference {
+                catalog: &catalog,
+                schema: &schema,
+                table: &table,
+            };
+            let table = self.get_table(&table_ref).await?;
+            let insert_request = build_insert_request_from_stmt_values(&table, &insert)?;
+            let affected_rows = handle_insert_request(
+                &table.table_info(),
+                insert_request,
+                query_ctx,
+                &self.region_request_handler,
+            )
+            .await?;
+
+            Ok(Output::AffectedRows(affected_rows))
         } else {
             // Slow path: insert with subquery. Execute the subquery first, via query engine. Then
             // insert the results by sending insert requests.
@@ -72,9 +91,18 @@ impl StatementExecutor {
             let table_info = table.table_info();
             while let Some(batch) = stream.next().await {
                 let record_batch = batch.context(ReadRecordBatchSnafu)?;
-                let insert_request =
-                    build_insert_request(record_batch, table.schema(), &table_info)?;
-                affected_rows += self.send_insert_request(insert_request).await?;
+                let insert_request = build_insert_request_from_record_batch(
+                    record_batch,
+                    table.schema(),
+                    &table_info,
+                )?;
+                affected_rows += handle_insert_request(
+                    &table_info,
+                    insert_request,
+                    query_ctx.clone(),
+                    &self.region_request_handler,
+                )
+                .await?;
             }
 
             Ok(Output::AffectedRows(affected_rows))
@@ -105,8 +133,11 @@ impl StatementExecutor {
         let table_info = table.table_info();
         while let Some(batch) = stream.next().await {
             let record_batch = batch.context(ReadRecordBatchSnafu)?;
-            let delete_request = build_delete_request(record_batch, table.schema(), &table_info)?;
-            affected_rows += self.send_delete_request(delete_request).await?;
+            let delete_request =
+                build_delete_request_from_record_batch(record_batch, table.schema(), &table_info)?;
+            affected_rows += self
+                .send_delete_request(delete_request, query_ctx.clone())
+                .await?;
         }
 
         Ok(Output::AffectedRows(affected_rows))
@@ -163,7 +194,7 @@ fn extract_dml_statement(logical_plan: LogicalPlan) -> Result<DmlStatement> {
     }
 }
 
-fn build_insert_request(
+fn build_insert_request_from_record_batch(
     record_batch: RecordBatch,
     table_schema: SchemaRef,
     table_info: &TableInfoRef,
@@ -181,7 +212,105 @@ fn build_insert_request(
     })
 }
 
-fn build_delete_request(
+pub fn build_insert_request_from_stmt_values(
+    table: &TableRef,
+    stmt: &Insert,
+) -> Result<InsertRequest> {
+    todo!();
+
+    // let values = stmt.values_body().context(MissingInsertBodySnafu)?;
+
+    // let columns = stmt.columns();
+    // let schema = table.schema();
+    // let columns_num = if columns.is_empty() {
+    //     schema.column_schemas().len()
+    // } else {
+    //     columns.len()
+    // };
+    // let rows_num = values.len();
+
+    // let mut columns_builders: Vec<(&ColumnSchema, Box<dyn MutableVector>)> =
+    //     Vec::with_capacity(columns_num);
+
+    // // Initialize vectors
+    // if columns.is_empty() {
+    //     for column_schema in schema.column_schemas() {
+    //         let data_type = &column_schema.data_type;
+    //         columns_builders.push((column_schema, data_type.create_mutable_vector(rows_num)));
+    //     }
+    // } else {
+    //     for column_name in columns {
+    //         let column_schema =
+    //             schema
+    //                 .column_schema_by_name(column_name)
+    //                 .with_context(|| ColumnNotFoundSnafu {
+    //                     msg: format!(
+    //                         "Column {} not found in table {}",
+    //                         column_name,
+    //                         table.table_info().name
+    //                     ),
+    //                 })?;
+    //         let data_type = &column_schema.data_type;
+    //         columns_builders.push((column_schema, data_type.create_mutable_vector(rows_num)));
+    //     }
+    // }
+
+    // // Convert rows into columns
+    // for row in values {
+    //     ensure!(
+    //         row.len() == columns_num,
+    //         ColumnValuesNumberMismatchSnafu {
+    //             columns: columns_num,
+    //             values: row.len(),
+    //         }
+    //     );
+
+    //     for (sql_val, (column_schema, builder)) in row.iter().zip(columns_builders.iter_mut()) {
+    //         add_row_to_vector(column_schema, sql_val, builder)?;
+    //     }
+    // }
+
+    // Ok(InsertRequest {
+    //     catalog_name: table_ref.catalog.to_string(),
+    //     schema_name: table_ref.schema.to_string(),
+    //     table_name: table_ref.table.to_string(),
+    //     columns_values: columns_builders
+    //         .into_iter()
+    //         .map(|(cs, mut b)| (cs.name.to_string(), b.to_vector()))
+    //         .collect(),
+    //     region_number: 0,
+    // })
+}
+
+const DEFAULT_PLACEHOLDER_VALUE: &str = "default";
+
+// fn add_row_to_vector(
+//     column_schema: &ColumnSchema,
+//     sql_val: &SqlValue,
+//     builder: &mut Box<dyn MutableVector>,
+// ) -> Result<()> {
+//     let value = if replace_default(sql_val) {
+//         column_schema
+//             .create_default()
+//             .context(ColumnDefaultValueSnafu {
+//                 column: column_schema.name.to_string(),
+//             })?
+//             .context(ColumnNoneDefaultValueSnafu {
+//                 column: column_schema.name.to_string(),
+//             })?
+//     } else {
+//         statements::sql_value_to_value(&column_schema.name, &column_schema.data_type, sql_val)
+//             .context(ParseSqlSnafu)?
+//     };
+//     builder.push_value_ref(value.as_value_ref());
+//     Ok(())
+// }
+
+// fn replace_default(sql_val: &SqlValue) -> bool {
+//     matches!(sql_val, SqlValue::Placeholder(s) if s.to_lowercase() == DEFAULT_PLACEHOLDER_VALUE)
+// }
+
+fn build_delete_request_from_record_batch(
     record_batch: RecordBatch,
     table_schema: SchemaRef,
     table_info: &TableInfoRef,

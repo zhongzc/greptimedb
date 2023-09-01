@@ -33,17 +33,16 @@ use datatypes::vectors::{
     TimestampMillisecondVector, TimestampNanosecondVector, TimestampSecondVector, UInt32Vector,
     UInt64Vector, VectorRef,
 };
-use greptime_proto::v1;
 use greptime_proto::v1::ddl_request::Expr;
 use greptime_proto::v1::greptime_request::Request;
 use greptime_proto::v1::query_request::Query;
 use greptime_proto::v1::value::ValueData;
-use greptime_proto::v1::{DdlRequest, IntervalMonthDayNano, QueryRequest, SemanticType};
+use greptime_proto::v1::{self, DdlRequest, IntervalMonthDayNano, QueryRequest, Row, SemanticType};
 use snafu::prelude::*;
 
 use crate::error::{self, Result};
 use crate::v1::column::Values;
-use crate::v1::{Column, ColumnDataType};
+use crate::v1::{Column, ColumnDataType, Value as GrpcValue};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ColumnDataTypeWrapper(ColumnDataType);
@@ -802,6 +801,59 @@ pub fn to_column_data_type(data_type: &ConcreteDataType) -> Option<ColumnDataTyp
     };
 
     Some(column_data_type)
+}
+
+pub fn vectors_to_rows<'a>(
+    columns: impl Iterator<Item = &'a VectorRef>,
+    row_count: usize,
+) -> Vec<Row> {
+    let mut rows = vec![Row { values: vec![] }; row_count];
+    for column in columns {
+        for (row_index, row) in rows.iter_mut().enumerate() {
+            row.values.push(GrpcValue {
+                value_data: match column.get(row_index) {
+                    Value::Null => None,
+                    Value::Boolean(v) => Some(ValueData::BoolValue(v)),
+                    Value::UInt8(v) => Some(ValueData::U8Value(v as _)),
+                    Value::UInt16(v) => Some(ValueData::U16Value(v as _)),
+                    Value::UInt32(v) => Some(ValueData::U32Value(v)),
+                    Value::UInt64(v) => Some(ValueData::U64Value(v)),
+                    Value::Int8(v) => Some(ValueData::I8Value(v as _)),
+                    Value::Int16(v) => Some(ValueData::I16Value(v as _)),
+                    Value::Int32(v) => Some(ValueData::I32Value(v)),
+                    Value::Int64(v) => Some(ValueData::I64Value(v)),
+                    Value::Float32(v) => Some(ValueData::F32Value(*v)),
+                    Value::Float64(v) => Some(ValueData::F64Value(*v)),
+                    Value::String(v) => Some(ValueData::StringValue(v.as_utf8().to_string())),
+                    Value::Binary(v) => Some(ValueData::BinaryValue(v.to_vec())),
+                    Value::Date(v) => Some(ValueData::DateValue(v.val())),
+                    Value::DateTime(v) => Some(ValueData::DatetimeValue(v.val())),
+                    Value::Timestamp(v) => Some(match v.unit() {
+                        TimeUnit::Second => ValueData::TimeSecondValue(v.value()),
+                        TimeUnit::Millisecond => ValueData::TimeMillisecondValue(v.value()),
+                        TimeUnit::Microsecond => ValueData::TimeMicrosecondValue(v.value()),
+                        TimeUnit::Nanosecond => ValueData::TimeNanosecondValue(v.value()),
+                    }),
+                    Value::Time(v) => Some(match v.unit() {
+                        TimeUnit::Second => ValueData::TimeSecondValue(v.value()),
+                        TimeUnit::Millisecond => ValueData::TimeMillisecondValue(v.value()),
+                        TimeUnit::Microsecond => ValueData::TimeMicrosecondValue(v.value()),
+                        TimeUnit::Nanosecond => ValueData::TimeNanosecondValue(v.value()),
+                    }),
+                    Value::Interval(v) => Some(match v.unit() {
+                        IntervalUnit::YearMonth => ValueData::IntervalYearMonthValues(v.to_i32()),
+                        IntervalUnit::DayTime => ValueData::IntervalDayTimeValues(v.to_i64()),
+                        IntervalUnit::MonthDayNano => ValueData::IntervalMonthDayNanoValues(
+                            convert_i128_to_interval(v.to_i128()),
+                        ),
+                    }),
+                    Value::List(_) => unreachable!(),
+                },
+            })
+        }
+    }
+
+    rows
 }
 
 /// Returns true if the column type is equal to expected type.
