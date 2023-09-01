@@ -126,7 +126,7 @@ impl DistDeleter {
                 .find_table_route(table_id)
                 .await
                 .with_context(|_| FindTableRouteSnafu {
-                    table_name: table_name.to_string(),
+                    table_id,
                 })?;
 
             for (region_number, delete) in split {

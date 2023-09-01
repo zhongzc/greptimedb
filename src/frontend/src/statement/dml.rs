@@ -36,6 +36,7 @@ use crate::error::{
     BuildColumnVectorsSnafu, ExecLogicalPlanSnafu, ExecuteStatementSnafu,
     MissingTimeIndexColumnSnafu, ReadRecordBatchSnafu, Result, UnexpectedSnafu,
 };
+use crate::table::insert::handle_insert_request;
 
 impl StatementExecutor {
     pub async fn insert(&self, insert: Box<Insert>, query_ctx: QueryContextRef) -> Result<Output> {
@@ -74,7 +75,7 @@ impl StatementExecutor {
                 let record_batch = batch.context(ReadRecordBatchSnafu)?;
                 let insert_request =
                     build_insert_request(record_batch, table.schema(), &table_info)?;
-                affected_rows += self.send_insert_request(insert_request).await?;
+                affected_rows += handle_insert_request(&table_info, insert_request, query_ctx.clone(), &self.region_request_handler).await?;
             }
 
             Ok(Output::AffectedRows(affected_rows))

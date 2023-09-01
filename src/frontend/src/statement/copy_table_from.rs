@@ -40,6 +40,7 @@ use datatypes::vectors::Helper;
 use futures_util::StreamExt;
 use object_store::{Entry, EntryMode, Metakey, ObjectStore};
 use regex::Regex;
+use session::context::QueryContextRef;
 use snafu::ResultExt;
 use table::engine::TableReference;
 use table::requests::{CopyTableRequest, InsertRequest};
@@ -47,6 +48,7 @@ use tokio::io::BufReader;
 
 use crate::error::{self, IntoVectorsSnafu, Result};
 use crate::statement::StatementExecutor;
+use crate::table::insert::handle_insert_request;
 
 const DEFAULT_BATCH_SIZE: usize = 8192;
 
@@ -235,13 +237,18 @@ impl StatementExecutor {
         }
     }
 
-    pub async fn copy_table_from(&self, req: CopyTableRequest) -> Result<usize> {
+    pub async fn copy_table_from(
+        &self,
+        req: CopyTableRequest,
+        ctx: QueryContextRef,
+    ) -> Result<usize> {
         let table_ref = TableReference {
             catalog: &req.catalog_name,
             schema: &req.schema_name,
             table: &req.table_name,
         };
         let table = self.get_table(&table_ref).await?;
+        let table_info = table.table_info();
 
         let format = Format::try_from(&req.with).context(error::ParseFileFormatSnafu)?;
 
@@ -322,14 +329,19 @@ impl StatementExecutor {
                     .zip(vectors)
                     .collect::<HashMap<_, _>>();
 
-                pending.push(self.send_insert_request(InsertRequest {
-                    catalog_name: req.catalog_name.to_string(),
-                    schema_name: req.schema_name.to_string(),
-                    table_name: req.table_name.to_string(),
-                    columns_values,
-                    //TODO: support multi-regions
-                    region_number: 0,
-                }));
+                pending.push(handle_insert_request(
+                    &table_info,
+                    InsertRequest {
+                        catalog_name: req.catalog_name.to_string(),
+                        schema_name: req.schema_name.to_string(),
+                        table_name: req.table_name.to_string(),
+                        columns_values,
+                        //TODO: support multi-regions
+                        region_number: 0,
+                    },
+                    ctx.clone(),
+                    &self.region_request_handler,
+                ));
 
                 if pending_mem_size as u64 >= pending_mem_threshold {
                     rows_inserted += batch_insert(&mut pending, &mut pending_mem_size).await?;

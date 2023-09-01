@@ -210,7 +210,7 @@ impl CreateTableProcedure {
             create_table_tasks.push(common_runtime::spawn_bg(async move {
                 for request in requests {
                     let client = clients.get_client(&datanode).await;
-                    let requester = RegionRequester::new(client);
+                    let requester = RegionRequester::new(client, 0, 0);
 
                     if let Err(err) = requester.handle(request).await {
                         return Err(handle_request_datanode_error(datanode)(err));

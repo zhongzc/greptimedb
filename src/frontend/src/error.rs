@@ -183,12 +183,12 @@ pub enum Error {
     },
 
     #[snafu(display(
-        "Failed to find table route for table {}, source: {}",
-        table_name,
+        "Failed to find table route for table id {}, source: {}",
+        table_id,
         source
     ))]
     FindTableRoute {
-        table_name: String,
+        table_id: u32,
         #[snafu(backtrace)]
         source: partition::error::Error,
     },
@@ -317,6 +317,12 @@ pub enum Error {
     InvokeDatanode {
         #[snafu(backtrace)]
         source: datanode::error::Error,
+    },
+
+    #[snafu(display("{source}"))]
+    InvokeRegionServer {
+        #[snafu(backtrace)]
+        source: servers::error::Error,
     },
 
     #[snafu(display("Missing meta_client_options section in config"))]
@@ -719,6 +725,7 @@ impl ErrorExt for Error {
             Error::TableAlreadyExist { .. } => StatusCode::TableAlreadyExists,
             Error::EncodeSubstraitLogicalPlan { source } => source.status_code(),
             Error::InvokeDatanode { source } => source.status_code(),
+            Error::InvokeRegionServer { source } => source.status_code(),
 
             Error::External { source } => source.status_code(),
             Error::DeserializePartition { source, .. }

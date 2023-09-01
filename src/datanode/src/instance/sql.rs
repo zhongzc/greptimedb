@@ -41,13 +41,14 @@ impl Instance {
     async fn do_execute_sql(&self, stmt: Statement, query_ctx: QueryContextRef) -> Result<Output> {
         match stmt {
             Statement::Insert(insert) => {
-                let request = SqlHandler::insert_to_request(
-                    self.catalog_manager.clone(),
-                    &insert,
-                    query_ctx.clone(),
-                )
-                .await?;
-                self.sql_handler.insert(request).await
+                // let request = SqlHandler::insert_to_request(
+                //     self.catalog_manager.clone(),
+                //     &insert,
+                //     query_ctx.clone(),
+                // )
+                // .await?;
+                // self.sql_handler.insert(request).await
+                unreachable!("Datanode should not execute INSERT statement")
             }
             Statement::CreateDatabase(create_database) => {
                 let request = CreateDatabaseRequest {

@@ -31,11 +31,10 @@ pub struct RegionRequester {
 }
 
 impl RegionRequester {
-    pub fn new(client: Client) -> Self {
-        // TODO(LFC): Pass in trace_id and span_id from some context when we have it.
+    pub fn new(client: Client, trace_id: u64, span_id: u64) -> Self {
         Self {
-            trace_id: 0,
-            span_id: 0,
+            trace_id,
+            span_id,
             client,
         }
     }
