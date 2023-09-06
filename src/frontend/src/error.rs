@@ -674,6 +674,9 @@ pub enum Error {
         column,
     ))]
     ColumnNoneDefaultValue { column: String, location: Location },
+
+    #[snafu(display("Invalid region request, reason: {}", reason))]
+    InvalidRegionRequest { reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -751,7 +754,8 @@ impl ErrorExt for Error {
             | Error::BuildDfLogicalPlan { .. }
             | Error::BuildTableMeta { .. }
             | Error::VectorToGrpcColumn { .. }
-            | Error::MissingInsertBody { .. } => StatusCode::Internal,
+            | Error::MissingInsertBody { .. }
+            | Error::InvalidRegionRequest { .. } => StatusCode::Internal,
 
             Error::IncompleteGrpcResult { .. }
             | Error::ContextValueNotFound { .. }

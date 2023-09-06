@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use api::v1::greptime_request::Request;
 use api::v1::meta::Partition;
-use api::v1::region::{region_request, QueryRequest, RegionRequest};
+use api::v1::region::{QueryRequest, RegionRequest, RegionResponse};
 use async_trait::async_trait;
 use client::error::{HandleRequestSnafu, Result as ClientResult};
 use client::region::check_response_header;
@@ -40,7 +40,9 @@ use snafu::{OptionExt, ResultExt};
 use store_api::storage::{RegionId, TableId};
 use table::metadata::RawTableInfo;
 
-use crate::error::{Error, InvokeDatanodeSnafu, InvokeRegionServerSnafu, Result};
+use crate::error::{
+    Error, InvalidRegionRequestSnafu, InvokeDatanodeSnafu, InvokeRegionServerSnafu, Result,
+};
 
 const TABLE_ID_SEQ: &str = "table_id";
 
@@ -71,23 +73,27 @@ impl StandaloneRegionRequestHandler {
     pub fn arc(region_server: RegionServer) -> Arc<Self> {
         Arc::new(Self { region_server })
     }
+
+    async fn handle_inner(&self, request: RegionRequest) -> Result<RegionResponse> {
+        let body = request.body.with_context(|| InvalidRegionRequestSnafu {
+            reason: "body not found",
+        })?;
+
+        self.region_server
+            .handle(body)
+            .await
+            .context(InvokeRegionServerSnafu)
+    }
 }
 
 #[async_trait]
 impl RegionRequestHandler for StandaloneRegionRequestHandler {
-    async fn handle(
-        &self,
-        request: region_request::Body,
-        _ctx: QueryContextRef,
-    ) -> ClientResult<AffectedRows> {
+    async fn handle(&self, request: RegionRequest) -> ClientResult<AffectedRows> {
         let response = self
-            .region_server
-            .handle(request)
+            .handle_inner(request)
             .await
-            .context(InvokeRegionServerSnafu)
             .map_err(BoxedError::new)
             .context(HandleRequestSnafu)?;
-
         check_response_header(response.header)?;
         Ok(response.affected_rows)
     }

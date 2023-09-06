@@ -18,7 +18,7 @@ pub(crate) mod inserter;
 use std::sync::Arc;
 
 use api::v1::greptime_request::Request;
-use api::v1::region::{region_request, QueryRequest};
+use api::v1::region::{region_request, QueryRequest, RegionRequest};
 use api::v1::CreateDatabaseExpr;
 use arrow_flight::Ticket;
 use async_trait::async_trait;
@@ -50,12 +50,11 @@ use table::TableRef;
 
 use crate::catalog::FrontendCatalogManager;
 use crate::error::{
-    self, CatalogSnafu, FindDatanodeSnafu, FindTableRouteSnafu, NotSupportedSnafu,
-    RequestDatanodeSnafu, Result, SchemaExistsSnafu, TableNotFoundSnafu,
+    self, CatalogSnafu, FindDatanodeSnafu, FindTableRouteSnafu, InvalidRegionRequestSnafu,
+    NotSupportedSnafu, RequestDatanodeSnafu, Result, SchemaExistsSnafu, TableNotFoundSnafu,
 };
 use crate::instance::distributed::deleter::DistDeleter;
 use crate::instance::distributed::inserter::DistInserter;
-use crate::req_convert::insert::StatementToRegion;
 use crate::MAX_VALUE;
 
 #[derive(Clone)]
@@ -81,15 +80,6 @@ impl DistInstance {
                     options: Default::default(),
                 };
                 self.handle_create_database(expr, query_ctx).await
-            }
-
-            Statement::Insert(insert) => {
-                let request = StatementToRegion::new(self.catalog_manager.as_ref(), &query_ctx)
-                    .convert(&insert)
-                    .await?;
-                let inserter = DistInserter::new(&self.catalog_manager);
-                let affected_rows = inserter.insert(request).await?;
-                Ok(Output::AffectedRows(affected_rows as usize))
             }
             Statement::ShowCreateTable(show) => {
                 let (catalog, schema, table) =
@@ -250,12 +240,8 @@ impl DistRegionRequestHandler {
 
 #[async_trait]
 impl RegionRequestHandler for DistRegionRequestHandler {
-    async fn handle(
-        &self,
-        request: region_request::Body,
-        ctx: QueryContextRef,
-    ) -> ClientResult<AffectedRows> {
-        self.handle_inner(request, ctx)
+    async fn handle(&self, request: RegionRequest) -> ClientResult<AffectedRows> {
+        self.handle_inner(request)
             .await
             .map_err(BoxedError::new)
             .context(HandleRequestSnafu)
@@ -270,20 +256,24 @@ impl RegionRequestHandler for DistRegionRequestHandler {
 }
 
 impl DistRegionRequestHandler {
-    async fn handle_inner(
-        &self,
-        request: region_request::Body,
-        ctx: QueryContextRef,
-    ) -> Result<AffectedRows> {
-        match request {
+    async fn handle_inner(&self, request: RegionRequest) -> Result<AffectedRows> {
+        let body = request.body.with_context(|| InvalidRegionRequestSnafu {
+            reason: "body not found",
+        })?;
+        let header = request.header.with_context(|| InvalidRegionRequestSnafu {
+            reason: "header not found",
+        })?;
+
+        match body {
             region_request::Body::Inserts(inserts) => {
-                let inserter =
-                    DistInserter::new(&self.catalog_manager).with_trace_id(ctx.trace_id());
-                inserter.insert(inserts).await
+                DistInserter::new(&self.catalog_manager, header.trace_id, header.span_id)
+                    .insert(inserts)
+                    .await
             }
             region_request::Body::Deletes(deletes) => {
-                let deleter = DistDeleter::new(&self.catalog_manager).with_trace_id(ctx.trace_id());
-                deleter.delete(deletes).await
+                DistDeleter::new(&self.catalog_manager, header.trace_id, header.span_id)
+                    .delete(deletes)
+                    .await
             }
             region_request::Body::Create(_) => NotSupportedSnafu {
                 feat: "region create",
