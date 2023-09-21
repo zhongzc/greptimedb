@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use api::v1::region::region_request::Body;
 use api::v1::region::{
@@ -24,14 +23,13 @@ use client::region_client::RegionClient;
 use client::region_handler::{AffectedRows, RegionRequestHandler};
 use client::{error as client_error, Result as ClientResult};
 use common_error::ext::BoxedError;
-use common_grpc::channel_manager::ChannelConfig;
 use common_recordbatch::SendableRecordBatchStream;
 use common_telemetry::debug;
 use futures::future;
 use snafu::{OptionExt, ResultExt};
 use store_api::storage::RegionId;
 
-use super::client_manager::DatanodeClients;
+use super::client_manager::DatanodeClientsRef;
 use crate::error::{JoinTaskSnafu, RegionLeaderNotFoundSnafu, Result};
 use crate::key::table_route::TableRouteManager;
 use crate::kv_backend::KvBackendRef;
@@ -40,7 +38,7 @@ use crate::rpc::router::find_region_leader;
 
 pub struct DistRegionRequestHandler {
     table_route_manager: TableRouteManager,
-    datanode_clients: Arc<DatanodeClients>,
+    datanode_clients: DatanodeClientsRef,
 }
 
 #[async_trait]
@@ -125,10 +123,10 @@ macro_rules! handle_mutations {
 }
 
 impl DistRegionRequestHandler {
-    pub fn new(channel_config: ChannelConfig, kv_backend: KvBackendRef) -> Self {
+    pub fn new(datanode_clients: DatanodeClientsRef, kv_backend: KvBackendRef) -> Self {
         Self {
             table_route_manager: TableRouteManager::new(kv_backend),
-            datanode_clients: Arc::new(DatanodeClients::new(channel_config)),
+            datanode_clients,
         }
     }
 

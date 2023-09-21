@@ -21,7 +21,7 @@ use common_meta::cache_invalidator::DummyKvCacheInvalidator;
 use common_procedure::options::ProcedureConfig;
 use datanode::config::DatanodeOptions;
 use datanode::datanode::DatanodeBuilder;
-use frontend::instance::{FrontendInstance, Instance, StandaloneDatanodeManager};
+use frontend::instance::{FrontendInstance, Instance};
 
 use crate::test_util::{self, create_tmp_dir_and_datanode_opts, StorageType, TestGuard};
 
@@ -81,11 +81,8 @@ impl GreptimeDbStandaloneBuilder {
             .await
             .unwrap();
 
-        let catalog_manager = KvBackendCatalogManager::new(
-            kv_store.clone(),
-            Arc::new(DummyKvCacheInvalidator),
-            Arc::new(StandaloneDatanodeManager(datanode.region_server())),
-        );
+        let catalog_manager =
+            KvBackendCatalogManager::new(kv_store.clone(), Arc::new(DummyKvCacheInvalidator));
 
         catalog_manager
             .table_metadata_manager_ref()

@@ -17,6 +17,7 @@ use std::sync::Arc;
 use auth::UserProviderRef;
 use clap::Parser;
 use common_base::Plugins;
+use common_meta::region::DatanodeClientsRef;
 use common_telemetry::logging;
 use frontend::frontend::FrontendOptions;
 use frontend::instance::{FrontendInstance, Instance as FeInstance};
@@ -184,11 +185,13 @@ impl StartCommand {
         logging::info!("Frontend start command: {:#?}", self);
         logging::info!("Frontend options: {:#?}", opts);
 
+        let datanode_clients = DatanodeClientsRef::default();
         let plugins = Arc::new(load_frontend_plugins(&self.user_provider)?);
 
-        let mut instance = FeInstance::try_new_distributed(&opts, plugins.clone())
-            .await
-            .context(error::StartFrontendSnafu)?;
+        let mut instance =
+            FeInstance::try_new_distributed(&opts, datanode_clients, plugins.clone())
+                .await
+                .context(error::StartFrontendSnafu)?;
 
         instance
             .build_servers(&opts)

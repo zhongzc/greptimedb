@@ -194,7 +194,8 @@ impl AlterTableProcedure {
 
         let requests = region_routes.iter().filter_map(|route| {
             route.leader_peer.is_some().then(|| {
-                let request = self.create_alter_region_request(route.region.id);
+                let region_id = RegionId::new(table_id, route.region.id.region_number());
+                let request = self.create_alter_region_request(region_id);
                 let header = RegionRequestHeader {
                     trace_id: common_telemetry::trace_id().unwrap_or_default(),
                     ..Default::default()

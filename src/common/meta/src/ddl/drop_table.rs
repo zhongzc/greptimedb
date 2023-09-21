@@ -25,6 +25,7 @@ use common_telemetry::info;
 use futures::future;
 use serde::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt};
+use store_api::storage::RegionId;
 use strum::AsRefStr;
 use table::engine::TableReference;
 use table::metadata::{RawTableInfo, TableId};
@@ -134,17 +135,17 @@ impl DropTableProcedure {
     }
 
     pub async fn on_datanode_drop_regions(&self) -> Result<Status> {
+        let table_id = self.data.table_id();
         let requests = self.data.region_routes().iter().filter_map(|route| {
             route.leader_peer.is_some().then(|| {
                 let header = RegionRequestHeader {
                     trace_id: common_telemetry::trace_id().unwrap_or_default(),
                     ..Default::default()
                 };
+                let region_id = RegionId::new(table_id, route.region.id.region_number()).as_u64();
                 RegionRequest {
                     header: Some(header),
-                    body: Some(Body::Drop(PbDropRegionRequest {
-                        region_id: route.region.id.as_u64(),
-                    })),
+                    body: Some(Body::Drop(PbDropRegionRequest { region_id })),
                 }
             })
         });

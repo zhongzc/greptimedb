@@ -17,11 +17,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use api::v1::meta::Role;
-use client::client_manager::DatanodeClients;
 use client::Client;
 use common_base::Plugins;
 use common_grpc::channel_manager::{ChannelConfig, ChannelManager};
 use common_meta::peer::Peer;
+use common_meta::region::{DatanodeClients, DatanodeClientsRef};
 use common_meta::DatanodeId;
 use common_runtime::Builder as RuntimeBuilder;
 use common_test_util::temp_dir::create_temp_dir;
@@ -216,7 +216,7 @@ impl GreptimeDbClusterBuilder {
     async fn build_frontend(
         &self,
         meta_srv: MockInfo,
-        datanode_clients: Arc<DatanodeClients>,
+        datanode_clients: DatanodeClientsRef,
     ) -> Arc<FeInstance> {
         let mut meta_client = MetaClientBuilder::new(1000, 0, Role::Frontend)
             .enable_router()

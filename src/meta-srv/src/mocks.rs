@@ -19,9 +19,9 @@ use api::v1::meta::ddl_task_server::DdlTaskServer;
 use api::v1::meta::heartbeat_server::HeartbeatServer;
 use api::v1::meta::router_server::RouterServer;
 use api::v1::meta::store_server::StoreServer;
-use client::region_handler::RegionRequestHandlerRef;
 use common_grpc::channel_manager::{ChannelConfig, ChannelManager};
 use common_meta::key::TableMetadataManager;
+use common_meta::region::{DatanodeClientsRef, DistRegionRequestHandler};
 use tower::service_fn;
 
 use crate::metasrv::builder::MetaSrvBuilder;
@@ -56,12 +56,11 @@ pub async fn mock(
     opts: MetaSrvOptions,
     kv_store: KvStoreRef,
     selector: Option<SelectorRef>,
-    region_handler: Option<RegionRequestHandlerRef>,
+    datanode_clients: Option<DatanodeClientsRef>,
 ) -> MockInfo {
+    let kv_backend = KvBackendAdapter::wrap(kv_store.clone());
     let server_addr = opts.server_addr.clone();
-    let table_metadata_manager = Arc::new(TableMetadataManager::new(KvBackendAdapter::wrap(
-        kv_store.clone(),
-    )));
+    let table_metadata_manager = Arc::new(TableMetadataManager::new(kv_backend.clone()));
 
     table_metadata_manager.init().await.unwrap();
 
@@ -72,8 +71,11 @@ pub async fn mock(
         None => builder,
     };
 
-    let builder = match region_handler {
-        Some(region_handler) => builder.region_handler(region_handler),
+    let builder = match datanode_clients {
+        Some(datanode_clients) => builder.region_handler(Arc::new(DistRegionRequestHandler::new(
+            datanode_clients,
+            kv_backend,
+        ))),
         None => builder,
     };
 

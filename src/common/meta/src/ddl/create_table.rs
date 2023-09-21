@@ -24,6 +24,7 @@ use common_telemetry::info;
 use futures::future;
 use serde::{Deserialize, Serialize};
 use snafu::{ensure, OptionExt, ResultExt};
+use store_api::storage::RegionId;
 use strum::AsRefStr;
 use table::engine::TableReference;
 use table::metadata::{RawTableInfo, TableId};
@@ -177,10 +178,12 @@ impl CreateTableProcedure {
 
         let request_template = self.create_region_request_template()?;
 
+        let table_id = self.table_id();
         let requests = region_routes.iter().filter_map(|route| {
             route.leader_peer.is_some().then(|| {
                 let mut request = request_template.clone();
-                request.region_id = route.region.id.as_u64();
+                let region_id = RegionId::new(table_id, route.region.id.region_number()).as_u64();
+                request.region_id = region_id;
                 request.path = storage_path.clone();
                 let header = RegionRequestHeader {
                     trace_id: common_telemetry::trace_id().unwrap_or_default(),

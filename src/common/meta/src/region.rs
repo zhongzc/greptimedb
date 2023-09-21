@@ -15,4 +15,5 @@
 mod client_manager;
 mod dist_handler;
 
+pub use client_manager::{DatanodeClients, DatanodeClientsRef};
 pub use dist_handler::DistRegionRequestHandler;

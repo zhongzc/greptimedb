@@ -98,114 +98,118 @@ pub mod mock {
     }
 }
 
-// #[cfg(test)]
-// pub mod test_data {
-//     use std::sync::Arc;
+#[cfg(test)]
+pub mod test_data {
+    use std::sync::Arc;
 
-//     use chrono::DateTime;
-//     use client::region_handler::RegionRequestHandlerRef;
-//     use common_catalog::consts::MITO2_ENGINE;
-//     use common_meta::ddl::DdlContext;
-//     use common_meta::key::TableMetadataManager;
-//     use common_meta::peer::Peer;
-//     use common_meta::rpc::router::RegionRoute;
-//     use common_meta::sequence::Sequence;
-//     use datatypes::prelude::ConcreteDataType;
-//     use datatypes::schema::{ColumnSchema, RawSchema};
-//     use table::metadata::{RawTableInfo, RawTableMeta, TableIdent, TableType};
-//     use table::requests::TableOptions;
+    use chrono::DateTime;
+    use common_catalog::consts::MITO2_ENGINE;
+    use common_meta::ddl::DdlContext;
+    use common_meta::key::TableMetadataManager;
+    use common_meta::peer::Peer;
+    use common_meta::region::{DatanodeClientsRef, DistRegionRequestHandler};
+    use common_meta::rpc::router::RegionRoute;
+    use common_meta::sequence::Sequence;
+    use datatypes::prelude::ConcreteDataType;
+    use datatypes::schema::{ColumnSchema, RawSchema};
+    use table::metadata::{RawTableInfo, RawTableMeta, TableIdent, TableType};
+    use table::requests::TableOptions;
 
-//     use crate::cache_invalidator::MetasrvCacheInvalidator;
-//     use crate::handler::{HeartbeatMailbox, Pushers};
-//     use crate::metasrv::MetasrvInfo;
-//     use crate::service::store::kv::KvBackendAdapter;
-//     use crate::service::store::memory::MemStore;
-//     use crate::test_util::new_region_route;
+    use crate::cache_invalidator::MetasrvCacheInvalidator;
+    use crate::handler::{HeartbeatMailbox, Pushers};
+    use crate::metasrv::MetasrvInfo;
+    use crate::service::store::kv::KvBackendAdapter;
+    use crate::service::store::memory::MemStore;
+    use crate::test_util::new_region_route;
 
-//     pub fn new_region_routes() -> Vec<RegionRoute> {
-//         let peers = vec![
-//             Peer::new(1, "127.0.0.1:4001"),
-//             Peer::new(2, "127.0.0.1:4002"),
-//             Peer::new(3, "127.0.0.1:4003"),
-//         ];
-//         vec![
-//             new_region_route(1, &peers, 3),
-//             new_region_route(2, &peers, 2),
-//             new_region_route(3, &peers, 1),
-//         ]
-//     }
+    pub fn new_region_routes() -> Vec<RegionRoute> {
+        let peers = vec![
+            Peer::new(1, "127.0.0.1:4001"),
+            Peer::new(2, "127.0.0.1:4002"),
+            Peer::new(3, "127.0.0.1:4003"),
+        ];
+        vec![
+            new_region_route(1, &peers, 3),
+            new_region_route(2, &peers, 2),
+            new_region_route(3, &peers, 1),
+        ]
+    }
 
-//     pub fn new_table_info() -> RawTableInfo {
-//         RawTableInfo {
-//             ident: TableIdent {
-//                 table_id: 42,
-//                 version: 1,
-//             },
-//             name: "my_table".to_string(),
-//             desc: Some("blabla".to_string()),
-//             catalog_name: "my_catalog".to_string(),
-//             schema_name: "my_schema".to_string(),
-//             meta: RawTableMeta {
-//                 schema: RawSchema {
-//                     column_schemas: vec![
-//                         ColumnSchema::new(
-//                             "ts".to_string(),
-//                             ConcreteDataType::timestamp_millisecond_datatype(),
-//                             false,
-//                         ),
-//                         ColumnSchema::new(
-//                             "my_tag1".to_string(),
-//                             ConcreteDataType::string_datatype(),
-//                             true,
-//                         ),
-//                         ColumnSchema::new(
-//                             "my_tag2".to_string(),
-//                             ConcreteDataType::string_datatype(),
-//                             true,
-//                         ),
-//                         ColumnSchema::new(
-//                             "my_field_column".to_string(),
-//                             ConcreteDataType::int32_datatype(),
-//                             true,
-//                         ),
-//                     ],
-//                     timestamp_index: Some(0),
-//                     version: 0,
-//                 },
-//                 primary_key_indices: vec![1, 2],
-//                 value_indices: vec![2],
-//                 engine: MITO2_ENGINE.to_string(),
-//                 next_column_id: 3,
-//                 region_numbers: vec![1, 2, 3],
-//                 options: TableOptions::default(),
-//                 created_on: DateTime::default(),
-//                 partition_key_indices: vec![],
-//             },
-//             table_type: TableType::Base,
-//         }
-//     }
+    pub fn new_table_info() -> RawTableInfo {
+        RawTableInfo {
+            ident: TableIdent {
+                table_id: 42,
+                version: 1,
+            },
+            name: "my_table".to_string(),
+            desc: Some("blabla".to_string()),
+            catalog_name: "my_catalog".to_string(),
+            schema_name: "my_schema".to_string(),
+            meta: RawTableMeta {
+                schema: RawSchema {
+                    column_schemas: vec![
+                        ColumnSchema::new(
+                            "ts".to_string(),
+                            ConcreteDataType::timestamp_millisecond_datatype(),
+                            false,
+                        ),
+                        ColumnSchema::new(
+                            "my_tag1".to_string(),
+                            ConcreteDataType::string_datatype(),
+                            true,
+                        ),
+                        ColumnSchema::new(
+                            "my_tag2".to_string(),
+                            ConcreteDataType::string_datatype(),
+                            true,
+                        ),
+                        ColumnSchema::new(
+                            "my_field_column".to_string(),
+                            ConcreteDataType::int32_datatype(),
+                            true,
+                        ),
+                    ],
+                    timestamp_index: Some(0),
+                    version: 0,
+                },
+                primary_key_indices: vec![1, 2],
+                value_indices: vec![2],
+                engine: MITO2_ENGINE.to_string(),
+                next_column_id: 3,
+                region_numbers: vec![1, 2, 3],
+                options: TableOptions::default(),
+                created_on: DateTime::default(),
+                partition_key_indices: vec![],
+            },
+            table_type: TableType::Base,
+        }
+    }
 
-//     pub(crate) fn new_ddl_context(region_handler: RegionRequestHandlerRef) -> DdlContext {
-//         let kv_store = Arc::new(MemStore::new());
+    pub(crate) fn new_ddl_context(datanode_clients: DatanodeClientsRef) -> DdlContext {
+        let kv_store = Arc::new(MemStore::new());
 
-//         let mailbox_sequence = Sequence::new(
-//             "test_heartbeat_mailbox",
-//             0,
-//             100,
-//             KvBackendAdapter::wrap(kv_store.clone()),
-//         );
-//         let mailbox = HeartbeatMailbox::create(Pushers::default(), mailbox_sequence);
+        let mailbox_sequence = Sequence::new(
+            "test_heartbeat_mailbox",
+            0,
+            100,
+            KvBackendAdapter::wrap(kv_store.clone()),
+        );
+        let mailbox = HeartbeatMailbox::create(Pushers::default(), mailbox_sequence);
 
-//         let kv_backend = KvBackendAdapter::wrap(kv_store);
-//         DdlContext {
-//             region_handler,
-//             cache_invalidator: Arc::new(MetasrvCacheInvalidator::new(
-//                 mailbox,
-//                 MetasrvInfo {
-//                     server_addr: "127.0.0.1:4321".to_string(),
-//                 },
-//             )),
-//             table_metadata_manager: Arc::new(TableMetadataManager::new(kv_backend)),
-//         }
-//     }
-// }
+        let kv_backend = KvBackendAdapter::wrap(kv_store);
+        let region_handler = Arc::new(DistRegionRequestHandler::new(
+            datanode_clients,
+            kv_backend.clone(),
+        ));
+        DdlContext {
+            region_handler,
+            cache_invalidator: Arc::new(MetasrvCacheInvalidator::new(
+                mailbox,
+                MetasrvInfo {
+                    server_addr: "127.0.0.1:4321".to_string(),
+                },
+            )),
+            table_metadata_manager: Arc::new(TableMetadataManager::new(kv_backend)),
+        }
+    }
+}

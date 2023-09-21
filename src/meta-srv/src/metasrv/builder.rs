@@ -22,7 +22,7 @@ use common_meta::ddl_manager::{DdlManager, DdlManagerRef};
 use common_meta::distributed_time_constants;
 use common_meta::key::{TableMetadataManager, TableMetadataManagerRef};
 use common_meta::kv_backend::KvBackendRef;
-use common_meta::region::DistRegionRequestHandler;
+use common_meta::region::{DatanodeClients, DistRegionRequestHandler};
 use common_meta::sequence::{Sequence, SequenceRef};
 use common_meta::state_store::KvStateStore;
 use common_procedure::local::{LocalManager, ManagerConfig};
@@ -314,6 +314,7 @@ fn build_procedure_manager(options: &MetaSrvOptions, kv_store: &KvStoreRef) -> P
     Arc::new(LocalManager::new(manager_config, state_store))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_ddl_manager(
     options: &MetaSrvOptions,
     region_handler: Option<RegionRequestHandlerRef>,
@@ -333,8 +334,8 @@ fn build_ddl_manager(
                 options.datanode.client_options.connect_timeout_millis,
             ))
             .tcp_nodelay(options.datanode.client_options.tcp_nodelay);
-        let region_handler =
-            DistRegionRequestHandler::new(datanode_client_channel_config, kv_backend);
+        let datanode_clients = Arc::new(DatanodeClients::new(datanode_client_channel_config));
+        let region_handler = DistRegionRequestHandler::new(datanode_clients, kv_backend);
         Arc::new(region_handler)
     });
     let cache_invalidator = Arc::new(MetasrvCacheInvalidator::new(

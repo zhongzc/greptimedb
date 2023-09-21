@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use client::Client;
@@ -23,6 +24,14 @@ use crate::peer::Peer;
 pub struct DatanodeClients {
     channel_manager: ChannelManager,
     clients: Cache<Peer, Client>,
+}
+
+pub type DatanodeClientsRef = Arc<DatanodeClients>;
+
+impl Default for DatanodeClients {
+    fn default() -> Self {
+        Self::new(ChannelConfig::default())
+    }
 }
 
 impl DatanodeClients {

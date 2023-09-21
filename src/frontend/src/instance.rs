@@ -39,7 +39,7 @@ use common_meta::heartbeat::handler::parse_mailbox_message::ParseMailboxMessageH
 use common_meta::heartbeat::handler::HandlerGroupExecutor;
 use common_meta::key::TableMetadataManager;
 use common_meta::kv_backend::KvBackendRef;
-use common_meta::region::DistRegionRequestHandler;
+use common_meta::region::{DatanodeClientsRef, DistRegionRequestHandler};
 use common_meta::state_store::KvStateStore;
 use common_procedure::local::{LocalManager, ManagerConfig};
 use common_procedure::options::ProcedureConfig;
@@ -132,15 +132,17 @@ pub struct Instance {
 impl Instance {
     pub async fn try_new_distributed(
         opts: &FrontendOptions,
+        datanode_clients: DatanodeClientsRef,
         plugins: Arc<Plugins>,
     ) -> Result<Self> {
         let meta_client = Self::create_meta_client(opts).await?;
 
-        Self::try_new_distributed_with(meta_client, plugins, opts).await
+        Self::try_new_distributed_with(meta_client, datanode_clients, plugins, opts).await
     }
 
     pub async fn try_new_distributed_with(
         meta_client: Arc<MetaClient>,
+        datanode_clients: DatanodeClientsRef,
         plugins: Arc<Plugins>,
         opts: &FrontendOptions,
     ) -> Result<Self> {
@@ -151,7 +153,7 @@ impl Instance {
         let partition_manager = Arc::new(PartitionRuleManager::new(meta_backend.clone()));
 
         let region_handler = Arc::new(DistRegionRequestHandler::new(
-            ChannelConfig::default(),
+            datanode_clients,
             meta_backend.clone(),
         ));
 
