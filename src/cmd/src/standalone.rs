@@ -27,7 +27,7 @@ use datanode::config::{DatanodeOptions, ProcedureConfig, StorageConfig};
 use datanode::datanode::{Datanode, DatanodeBuilder};
 use datanode::region_server::RegionServer;
 use frontend::frontend::FrontendOptions;
-use frontend::instance::{FrontendInstance, Instance as FeInstance, StandaloneDatanodeManager};
+use frontend::instance::{FrontendInstance, Instance as FeInstance};
 use frontend::service_config::{
     GrpcOptions, InfluxdbOptions, MysqlOptions, OpentsdbOptions, PostgresOptions, PromStoreOptions,
 };
@@ -314,11 +314,8 @@ impl StartCommand {
                 .context(StartDatanodeSnafu)?;
         let region_server = datanode.region_server();
 
-        let catalog_manager = KvBackendCatalogManager::new(
-            kv_store.clone(),
-            Arc::new(DummyKvCacheInvalidator),
-            Arc::new(StandaloneDatanodeManager(region_server.clone())),
-        );
+        let catalog_manager =
+            KvBackendCatalogManager::new(kv_store.clone(), Arc::new(DummyKvCacheInvalidator));
 
         catalog_manager
             .table_metadata_manager_ref()

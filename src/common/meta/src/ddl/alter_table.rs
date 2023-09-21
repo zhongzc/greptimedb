@@ -15,9 +15,10 @@
 use std::vec;
 
 use api::v1::alter_expr::Kind;
+use api::v1::region::region_request::Body;
 use api::v1::region::{
-    alter_request, region_request, AddColumn, AddColumns, AlterRequest, DropColumn, DropColumns,
-    RegionColumnDef, RegionRequest, RegionRequestHeader,
+    alter_request, AddColumn, AddColumns, AlterRequest, DropColumn, DropColumns, RegionColumnDef,
+    RegionRequest, RegionRequestHeader,
 };
 use api::v1::{AlterExpr, RenameTable};
 use async_trait::async_trait;
@@ -44,10 +45,8 @@ use crate::error::{
 };
 use crate::key::table_info::TableInfoValue;
 use crate::key::table_name::TableNameKey;
-use crate::key::table_route::TableRouteValue;
 use crate::metrics;
 use crate::rpc::ddl::AlterTableTask;
-use crate::rpc::router::{find_leader_regions, find_leaders};
 use crate::table_name::TableName;
 
 pub struct AlterTableProcedure {
@@ -169,21 +168,20 @@ impl AlterTableProcedure {
             })
     }
 
-    pub fn create_alter_region_request(&self, region_id: RegionId) -> Result<AlterRequest> {
+    pub fn create_alter_region_request(&self, region_id: RegionId) -> AlterRequest {
         let table_info = self.data.table_info();
 
-        Ok(AlterRequest {
+        AlterRequest {
             region_id: region_id.as_u64(),
             schema_version: table_info.ident.version,
             kind: self.kind.clone(),
-        })
+        }
     }
 
     pub async fn submit_alter_region_requests(&mut self) -> Result<Status> {
         let table_id = self.data.table_id();
         let table_ref = self.data.table_ref();
-
-        let TableRouteValue { region_routes, .. } = self
+        let region_routes = self
             .context
             .table_metadata_manager
             .table_route_manager()
@@ -191,40 +189,34 @@ impl AlterTableProcedure {
             .await?
             .with_context(|| TableRouteNotFoundSnafu {
                 table_name: table_ref.to_string(),
-            })?;
+            })?
+            .region_routes;
 
-        let leaders = find_leaders(&region_routes);
-        let mut alter_region_tasks = Vec::with_capacity(leaders.len());
-
-        for datanode in leaders {
-            let requester = self.context.datanode_manager.datanode(&datanode).await;
-            let regions = find_leader_regions(&region_routes, &datanode);
-
-            for region in regions {
-                let region_id = RegionId::new(table_id, region);
-                let request = self.create_alter_region_request(region_id)?;
-                let request = RegionRequest {
-                    header: Some(RegionRequestHeader {
-                        trace_id: common_telemetry::trace_id().unwrap_or_default(),
-                        ..Default::default()
-                    }),
-                    body: Some(region_request::Body::Alter(request)),
+        let requests = region_routes.iter().filter_map(|route| {
+            route.leader_peer.is_some().then(|| {
+                let request = self.create_alter_region_request(route.region.id);
+                let header = RegionRequestHeader {
+                    trace_id: common_telemetry::trace_id().unwrap_or_default(),
+                    ..Default::default()
                 };
-                debug!("Submitting {request:?} to {datanode}");
+                RegionRequest {
+                    header: Some(header),
+                    body: Some(Body::Alter(request)),
+                }
+            })
+        });
 
-                let datanode = datanode.clone();
-                let requester = requester.clone();
-
-                alter_region_tasks.push(async move {
-                    if let Err(e) = requester.handle(request).await {
-                        return Err(handle_operate_region_error(datanode)(e));
-                    }
-                    Ok(())
-                });
+        let tasks = requests.map(|request| {
+            let region_handler = self.context.region_handler.clone();
+            async move {
+                if let Err(err) = region_handler.handle(request).await {
+                    return Err(handle_operate_region_error(err));
+                }
+                Ok(())
             }
-        }
+        });
 
-        future::join_all(alter_region_tasks)
+        future::join_all(tasks)
             .await
             .into_iter()
             .collect::<Result<Vec<_>>>()?;

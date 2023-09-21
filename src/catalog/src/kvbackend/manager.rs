@@ -19,7 +19,6 @@ use std::sync::{Arc, Weak};
 use common_catalog::consts::{DEFAULT_SCHEMA_NAME, INFORMATION_SCHEMA_NAME, NUMBERS_TABLE_ID};
 use common_error::ext::BoxedError;
 use common_meta::cache_invalidator::{CacheInvalidator, Context};
-use common_meta::datanode_manager::DatanodeManagerRef;
 use common_meta::error::Result as MetaResult;
 use common_meta::key::catalog_name::CatalogNameKey;
 use common_meta::key::schema_name::SchemaNameKey;
@@ -59,7 +58,6 @@ pub struct KvBackendCatalogManager {
     backend_cache_invalidator: KvCacheInvalidatorRef,
     partition_manager: PartitionRuleManagerRef,
     table_metadata_manager: TableMetadataManagerRef,
-    datanode_manager: DatanodeManagerRef,
     /// A sub-CatalogManager that handles system tables
     system_catalog: SystemCatalog,
 }
@@ -107,13 +105,11 @@ impl KvBackendCatalogManager {
     pub fn new(
         backend: KvBackendRef,
         backend_cache_invalidator: KvCacheInvalidatorRef,
-        datanode_manager: DatanodeManagerRef,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             backend_cache_invalidator,
             partition_manager: Arc::new(PartitionRuleManager::new(backend.clone())),
             table_metadata_manager: Arc::new(TableMetadataManager::new(backend)),
-            datanode_manager,
             system_catalog: SystemCatalog {
                 catalog_manager: me.clone(),
             },
@@ -126,10 +122,6 @@ impl KvBackendCatalogManager {
 
     pub fn table_metadata_manager_ref(&self) -> &TableMetadataManagerRef {
         &self.table_metadata_manager
-    }
-
-    pub fn datanode_manager(&self) -> DatanodeManagerRef {
-        self.datanode_manager.clone()
     }
 
     pub async fn invalidate_schema(&self, catalog: &str, schema: &str) {

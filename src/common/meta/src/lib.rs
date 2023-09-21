@@ -16,7 +16,6 @@
 #![feature(async_closure)]
 
 pub mod cache_invalidator;
-pub mod datanode_manager;
 pub mod ddl;
 pub mod ddl_manager;
 pub mod distributed_time_constants;
@@ -28,6 +27,7 @@ pub mod kv_backend;
 pub mod metrics;
 pub mod peer;
 pub mod range_stream;
+pub mod region;
 pub mod rpc;
 pub mod sequence;
 pub mod state_store;

@@ -16,65 +16,47 @@ use api::v1::region::{QueryRequest, RegionRequest, RegionResponse};
 use api::v1::ResponseHeader;
 use arrow_flight::Ticket;
 use async_stream::stream;
-use async_trait::async_trait;
 use common_error::ext::{BoxedError, ErrorExt};
 use common_error::status_code::StatusCode;
 use common_grpc::flight::{FlightDecoder, FlightMessage};
-use common_meta::datanode_manager::{AffectedRows, Datanode};
-use common_meta::error::{self as meta_error, Result as MetaResult};
 use common_recordbatch::error::ExternalSnafu;
 use common_recordbatch::{RecordBatchStreamAdaptor, SendableRecordBatchStream};
 use common_telemetry::{error, timer};
 use prost::Message;
-use snafu::{location, Location, OptionExt, ResultExt};
+use snafu::{OptionExt, ResultExt};
 use tokio_stream::StreamExt;
 
-use crate::error::Error::RegionServer;
 use crate::error::{
     self, ConvertFlightDataSnafu, IllegalDatabaseResponseSnafu, IllegalFlightMessagesSnafu,
     MissingFieldSnafu, Result, ServerSnafu,
 };
+use crate::region_handler::AffectedRows;
 use crate::{metrics, Client, Error};
 
 #[derive(Debug)]
-pub struct RegionRequester {
+pub struct RegionClient {
     client: Client,
 }
 
-#[async_trait]
-impl Datanode for RegionRequester {
-    async fn handle(&self, request: RegionRequest) -> MetaResult<AffectedRows> {
-        self.handle_inner(request).await.map_err(|err| {
-            if matches!(err, RegionServer { .. }) {
-                meta_error::Error::RetryLater {
-                    source: BoxedError::new(err),
-                }
-            } else {
-                meta_error::Error::External {
-                    source: BoxedError::new(err),
-                    location: location!(),
-                }
-            }
-        })
-    }
-
-    async fn handle_query(&self, request: QueryRequest) -> MetaResult<SendableRecordBatchStream> {
-        let ticket = Ticket {
-            ticket: request.encode_to_vec().into(),
-        };
-        self.do_get_inner(ticket)
-            .await
-            .map_err(BoxedError::new)
-            .context(meta_error::ExternalSnafu)
-    }
-}
-
-impl RegionRequester {
+impl RegionClient {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
 
-    pub async fn do_get_inner(&self, ticket: Ticket) -> Result<SendableRecordBatchStream> {
+    pub async fn handle(&self, request: RegionRequest) -> Result<AffectedRows> {
+        self.handle_inner(request).await
+    }
+
+    pub async fn handle_query(&self, request: QueryRequest) -> Result<SendableRecordBatchStream> {
+        let ticket = Ticket {
+            ticket: request.encode_to_vec().into(),
+        };
+        self.do_get_inner(ticket).await
+    }
+}
+
+impl RegionClient {
+    async fn do_get_inner(&self, ticket: Ticket) -> Result<SendableRecordBatchStream> {
         let mut flight_client = self.client.make_flight_client()?;
         let response = flight_client
             .mut_inner()
@@ -180,10 +162,6 @@ impl RegionRequester {
         check_response_header(header)?;
 
         Ok(affected_rows)
-    }
-
-    pub async fn handle(&self, request: RegionRequest) -> Result<AffectedRows> {
-        self.handle_inner(request).await
     }
 }
 

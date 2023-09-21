@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use api::v1::region::region_request::Body as PbRegionRequest;
+use api::v1::region::region_request::Body;
 use api::v1::region::{
     CreateRequest as PbCreateRegionRequest, RegionColumnDef, RegionRequest, RegionRequestHeader,
 };
@@ -21,10 +21,9 @@ use async_trait::async_trait;
 use common_procedure::error::{FromJsonSnafu, Result as ProcedureResult, ToJsonSnafu};
 use common_procedure::{Context as ProcedureContext, LockKey, Procedure, Status};
 use common_telemetry::info;
-use futures::future::join_all;
+use futures::future;
 use serde::{Deserialize, Serialize};
 use snafu::{ensure, OptionExt, ResultExt};
-use store_api::storage::RegionId;
 use strum::AsRefStr;
 use table::engine::TableReference;
 use table::metadata::{RawTableInfo, TableId};
@@ -35,7 +34,7 @@ use crate::error::{self, Result};
 use crate::key::table_name::TableNameKey;
 use crate::metrics;
 use crate::rpc::ddl::CreateTableTask;
-use crate::rpc::router::{find_leader_regions, find_leaders, RegionRoute};
+use crate::rpc::router::RegionRoute;
 
 pub struct CreateTableProcedure {
     pub context: DdlContext,
@@ -178,47 +177,33 @@ impl CreateTableProcedure {
 
         let request_template = self.create_region_request_template()?;
 
-        let leaders = find_leaders(region_routes);
-        let mut create_region_tasks = Vec::with_capacity(leaders.len());
-
-        for datanode in leaders {
-            let requester = self.context.datanode_manager.datanode(&datanode).await;
-
-            let regions = find_leader_regions(region_routes, &datanode);
-            let requests = regions
-                .iter()
-                .map(|region_number| {
-                    let region_id = RegionId::new(self.table_id(), *region_number);
-
-                    let mut create_region_request = request_template.clone();
-                    create_region_request.region_id = region_id.as_u64();
-                    create_region_request.path = storage_path.clone();
-                    PbRegionRequest::Create(create_region_request)
-                })
-                .collect::<Vec<_>>();
-
-            for request in requests {
-                let request = RegionRequest {
-                    header: Some(RegionRequestHeader {
-                        trace_id: 0,
-                        span_id: 0,
-                    }),
-                    body: Some(request),
+        let requests = region_routes.iter().filter_map(|route| {
+            route.leader_peer.is_some().then(|| {
+                let mut request = request_template.clone();
+                request.region_id = route.region.id.as_u64();
+                request.path = storage_path.clone();
+                let header = RegionRequestHeader {
+                    trace_id: common_telemetry::trace_id().unwrap_or_default(),
+                    ..Default::default()
                 };
+                RegionRequest {
+                    header: Some(header),
+                    body: Some(Body::Create(request)),
+                }
+            })
+        });
 
-                let datanode = datanode.clone();
-                let requester = requester.clone();
-
-                create_region_tasks.push(async move {
-                    if let Err(err) = requester.handle(request).await {
-                        return Err(handle_operate_region_error(datanode)(err));
-                    }
-                    Ok(())
-                });
+        let tasks = requests.map(|request| {
+            let region_handler = self.context.region_handler.clone();
+            async move {
+                if let Err(err) = region_handler.handle(request).await {
+                    return Err(handle_operate_region_error(err));
+                }
+                Ok(())
             }
-        }
+        });
 
-        join_all(create_region_tasks)
+        future::join_all(tasks)
             .await
             .into_iter()
             .collect::<Result<Vec<_>>>()?;

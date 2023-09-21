@@ -16,11 +16,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-use client::client_manager::DatanodeClients;
+use client::region_handler::RegionRequestHandlerRef;
 use common_grpc::channel_manager::ChannelConfig;
 use common_meta::ddl_manager::{DdlManager, DdlManagerRef};
 use common_meta::distributed_time_constants;
 use common_meta::key::{TableMetadataManager, TableMetadataManagerRef};
+use common_meta::kv_backend::KvBackendRef;
+use common_meta::region::DistRegionRequestHandler;
 use common_meta::sequence::{Sequence, SequenceRef};
 use common_meta::state_store::KvStateStore;
 use common_procedure::local::{LocalManager, ManagerConfig};
@@ -66,7 +68,7 @@ pub struct MetaSrvBuilder {
     election: Option<ElectionRef>,
     meta_peer_client: Option<MetaPeerClientRef>,
     lock: Option<DistLockRef>,
-    datanode_clients: Option<Arc<DatanodeClients>>,
+    region_handler: Option<RegionRequestHandlerRef>,
     pubsub: Option<(PublishRef, SubscribeManagerRef)>,
 }
 
@@ -81,7 +83,7 @@ impl MetaSrvBuilder {
             election: None,
             options: None,
             lock: None,
-            datanode_clients: None,
+            region_handler: None,
             pubsub: None,
         }
     }
@@ -126,8 +128,8 @@ impl MetaSrvBuilder {
         self
     }
 
-    pub fn datanode_clients(mut self, clients: Arc<DatanodeClients>) -> Self {
-        self.datanode_clients = Some(clients);
+    pub fn region_handler(mut self, region_handler: RegionRequestHandlerRef) -> Self {
+        self.region_handler = Some(region_handler);
         self
     }
 
@@ -148,7 +150,7 @@ impl MetaSrvBuilder {
             selector,
             handler_group,
             lock,
-            datanode_clients,
+            region_handler,
             pubsub,
         } = self;
 
@@ -176,12 +178,13 @@ impl MetaSrvBuilder {
         };
         let ddl_manager = build_ddl_manager(
             &options,
-            datanode_clients,
+            region_handler,
             &procedure_manager,
             &mailbox,
             &table_metadata_manager,
             (&selector, &selector_ctx),
             &table_id_sequence,
+            kv_backend,
         );
         let _ = ddl_manager.try_start();
 
@@ -313,14 +316,15 @@ fn build_procedure_manager(options: &MetaSrvOptions, kv_store: &KvStoreRef) -> P
 
 fn build_ddl_manager(
     options: &MetaSrvOptions,
-    datanode_clients: Option<Arc<DatanodeClients>>,
+    region_handler: Option<RegionRequestHandlerRef>,
     procedure_manager: &ProcedureManagerRef,
     mailbox: &MailboxRef,
     table_metadata_manager: &TableMetadataManagerRef,
     (selector, selector_ctx): (&SelectorRef, &SelectorContext),
     table_id_sequence: &SequenceRef,
+    kv_backend: KvBackendRef,
 ) -> DdlManagerRef {
-    let datanode_clients = datanode_clients.unwrap_or_else(|| {
+    let region_handler = region_handler.unwrap_or_else(|| {
         let datanode_client_channel_config = ChannelConfig::new()
             .timeout(Duration::from_millis(
                 options.datanode.client_options.timeout_millis,
@@ -329,7 +333,9 @@ fn build_ddl_manager(
                 options.datanode.client_options.connect_timeout_millis,
             ))
             .tcp_nodelay(options.datanode.client_options.tcp_nodelay);
-        Arc::new(DatanodeClients::new(datanode_client_channel_config))
+        let region_handler =
+            DistRegionRequestHandler::new(datanode_client_channel_config, kv_backend);
+        Arc::new(region_handler)
     });
     let cache_invalidator = Arc::new(MetasrvCacheInvalidator::new(
         mailbox.clone(),
@@ -346,7 +352,7 @@ fn build_ddl_manager(
 
     Arc::new(DdlManager::new(
         procedure_manager.clone(),
-        datanode_clients,
+        region_handler,
         cache_invalidator,
         table_metadata_manager.clone(),
         table_meta_allocator,

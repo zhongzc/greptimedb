@@ -15,11 +15,11 @@
 use std::sync::Arc;
 
 use api::v1::meta::Partition;
+use client::region_handler::RegionRequestHandlerRef;
 use store_api::storage::TableId;
 use table::metadata::RawTableInfo;
 
 use crate::cache_invalidator::CacheInvalidatorRef;
-use crate::datanode_manager::DatanodeManagerRef;
 use crate::error::Result;
 use crate::key::TableMetadataManagerRef;
 use crate::rpc::ddl::{SubmitDdlTaskRequest, SubmitDdlTaskResponse};
@@ -64,7 +64,7 @@ pub type TableMetadataAllocatorRef = Arc<dyn TableMetadataAllocator>;
 
 #[derive(Clone)]
 pub struct DdlContext {
-    pub datanode_manager: DatanodeManagerRef,
+    pub region_handler: RegionRequestHandlerRef,
     pub cache_invalidator: CacheInvalidatorRef,
     pub table_metadata_manager: TableMetadataManagerRef,
 }

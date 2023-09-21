@@ -15,13 +15,14 @@
 use std::sync::Arc;
 
 use api::v1::meta::Partition;
-use api::v1::region::{QueryRequest, RegionRequest, RegionResponse};
+use api::v1::region::{QueryRequest, RegionRequest};
 use async_trait::async_trait;
-use client::region::check_response_header;
+use client::error::{self as client_error, Result as ClientResult};
+use client::region_client::check_response_header;
+use client::region_handler::{AffectedRows, RegionRequestHandler};
 use common_error::ext::BoxedError;
-use common_meta::datanode_manager::{AffectedRows, Datanode, DatanodeManager, DatanodeRef};
 use common_meta::ddl::{TableMetadataAllocator, TableMetadataAllocatorContext};
-use common_meta::error::{self as meta_error, Result as MetaResult};
+use common_meta::error::Result as MetaResult;
 use common_meta::kv_backend::KvBackendRef;
 use common_meta::peer::Peer;
 use common_meta::rpc::router::{Region, RegionRoute};
@@ -33,61 +34,42 @@ use snafu::{OptionExt, ResultExt};
 use store_api::storage::{RegionId, TableId};
 use table::metadata::RawTableInfo;
 
-use crate::error::{InvalidRegionRequestSnafu, InvokeRegionServerSnafu, Result};
-
 const TABLE_ID_SEQ: &str = "table_id";
 
-pub struct StandaloneDatanodeManager(pub RegionServer);
-
-#[async_trait]
-impl DatanodeManager for StandaloneDatanodeManager {
-    async fn datanode(&self, _datanode: &Peer) -> DatanodeRef {
-        RegionInvoker::arc(self.0.clone())
-    }
-}
-
-/// Relative to [client::region::RegionRequester]
-struct RegionInvoker {
+pub struct StandaloneRegionRequestHandler {
     region_server: RegionServer,
 }
 
-impl RegionInvoker {
-    pub fn arc(region_server: RegionServer) -> Arc<Self> {
-        Arc::new(Self { region_server })
-    }
+#[async_trait]
+impl RegionRequestHandler for StandaloneRegionRequestHandler {
+    async fn handle(&self, request: RegionRequest) -> ClientResult<AffectedRows> {
+        let body = request
+            .body
+            .context(client_error::MissingFieldSnafu { field: "body" })?;
 
-    async fn handle_inner(&self, request: RegionRequest) -> Result<RegionResponse> {
-        let body = request.body.with_context(|| InvalidRegionRequestSnafu {
-            reason: "body not found",
-        })?;
-
-        self.region_server
+        let response = self
+            .region_server
             .handle(body)
             .await
-            .context(InvokeRegionServerSnafu)
-    }
-}
+            .map_err(BoxedError::new)
+            .context(client_error::HandleRequestSnafu)?;
 
-#[async_trait]
-impl Datanode for RegionInvoker {
-    async fn handle(&self, request: RegionRequest) -> MetaResult<AffectedRows> {
-        let response = self
-            .handle_inner(request)
-            .await
-            .map_err(BoxedError::new)
-            .context(meta_error::ExternalSnafu)?;
-        check_response_header(response.header)
-            .map_err(BoxedError::new)
-            .context(meta_error::ExternalSnafu)?;
+        check_response_header(response.header)?;
         Ok(response.affected_rows)
     }
 
-    async fn handle_query(&self, request: QueryRequest) -> MetaResult<SendableRecordBatchStream> {
+    async fn do_get(&self, request: QueryRequest) -> ClientResult<SendableRecordBatchStream> {
         self.region_server
             .handle_read(request)
             .await
             .map_err(BoxedError::new)
-            .context(meta_error::ExternalSnafu)
+            .context(client_error::HandleRequestSnafu)
+    }
+}
+
+impl StandaloneRegionRequestHandler {
+    pub fn arc(region_server: RegionServer) -> Arc<Self> {
+        Arc::new(Self { region_server })
     }
 }
 

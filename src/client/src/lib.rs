@@ -13,12 +13,12 @@
 // limitations under the License.
 
 mod client;
-pub mod client_manager;
 mod database;
 pub mod error;
 pub mod load_balance;
 mod metrics;
-pub mod region;
+pub mod region_client;
+pub mod region_handler;
 mod stream_insert;
 
 pub use api;

@@ -53,13 +53,13 @@ pub enum Error {
     #[snafu(display("Failed to insert data, source: {}", source))]
     RequestInserts {
         #[snafu(backtrace)]
-        source: common_meta::error::Error,
+        source: client::error::Error,
     },
 
     #[snafu(display("Failed to delete data, source: {}", source))]
     RequestDeletes {
         #[snafu(backtrace)]
-        source: common_meta::error::Error,
+        source: client::error::Error,
     },
 
     #[snafu(display("Failed to parse SQL, source: {}", source))]

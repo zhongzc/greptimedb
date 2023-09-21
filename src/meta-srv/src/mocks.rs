@@ -19,7 +19,7 @@ use api::v1::meta::ddl_task_server::DdlTaskServer;
 use api::v1::meta::heartbeat_server::HeartbeatServer;
 use api::v1::meta::router_server::RouterServer;
 use api::v1::meta::store_server::StoreServer;
-use client::client_manager::DatanodeClients;
+use client::region_handler::RegionRequestHandlerRef;
 use common_grpc::channel_manager::{ChannelConfig, ChannelManager};
 use common_meta::key::TableMetadataManager;
 use tower::service_fn;
@@ -56,7 +56,7 @@ pub async fn mock(
     opts: MetaSrvOptions,
     kv_store: KvStoreRef,
     selector: Option<SelectorRef>,
-    datanode_clients: Option<Arc<DatanodeClients>>,
+    region_handler: Option<RegionRequestHandlerRef>,
 ) -> MockInfo {
     let server_addr = opts.server_addr.clone();
     let table_metadata_manager = Arc::new(TableMetadataManager::new(KvBackendAdapter::wrap(
@@ -72,8 +72,8 @@ pub async fn mock(
         None => builder,
     };
 
-    let builder = match datanode_clients {
-        Some(clients) => builder.datanode_clients(clients),
+    let builder = match region_handler {
+        Some(region_handler) => builder.region_handler(region_handler),
         None => builder,
     };
 

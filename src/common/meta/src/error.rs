@@ -18,10 +18,8 @@ use common_error::ext::{BoxedError, ErrorExt};
 use common_error::status_code::StatusCode;
 use serde_json::error::Error as JsonError;
 use snafu::{Location, Snafu};
-use store_api::storage::RegionNumber;
+use store_api::storage::{RegionId, RegionNumber};
 use table::metadata::TableId;
-
-use crate::peer::Peer;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
@@ -104,6 +102,12 @@ pub enum Error {
     #[snafu(display("Table route not found: {}", table_name))]
     TableRouteNotFound {
         table_name: String,
+        location: Location,
+    },
+
+    #[snafu(display("Region not found: {}", region_id))]
+    RegionLeaderNotFound {
+        region_id: RegionId,
         location: Location,
     },
 
@@ -237,15 +241,20 @@ pub enum Error {
     #[snafu(display("Invalid heartbeat response, location: {}", location))]
     InvalidHeartbeatResponse { location: Location },
 
-    #[snafu(display("Failed to operate on datanode: {}, source: {}", peer, source))]
+    #[snafu(display("Failed to operate datanode, source: {}", source))]
     OperateDatanode {
         location: Location,
-        peer: Peer,
         source: BoxedError,
     },
 
     #[snafu(display("Retry later, source: {}", source))]
     RetryLater { source: BoxedError },
+
+    #[snafu(display("Failed to join task, source: {}", source))]
+    JoinTask {
+        source: common_runtime::JoinError,
+        location: Location,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -267,7 +276,9 @@ impl ErrorExt for Error {
             | NextSequence { .. }
             | SequenceOutOfRange { .. }
             | UnexpectedSequenceValue { .. }
-            | InvalidHeartbeatResponse { .. } => StatusCode::Unexpected,
+            | InvalidHeartbeatResponse { .. }
+            | RegionLeaderNotFound { .. }
+            | JoinTask { .. } => StatusCode::Unexpected,
 
             SendMessage { .. }
             | GetKvCache { .. }

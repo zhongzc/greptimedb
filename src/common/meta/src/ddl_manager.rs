@@ -14,12 +14,12 @@
 
 use std::sync::Arc;
 
+use client::region_handler::RegionRequestHandlerRef;
 use common_procedure::{watcher, ProcedureId, ProcedureManagerRef, ProcedureWithId};
 use common_telemetry::{error, info};
 use snafu::{OptionExt, ResultExt};
 
 use crate::cache_invalidator::CacheInvalidatorRef;
-use crate::datanode_manager::DatanodeManagerRef;
 use crate::ddl::alter_table::AlterTableProcedure;
 use crate::ddl::create_table::CreateTableProcedure;
 use crate::ddl::drop_table::DropTableProcedure;
@@ -46,7 +46,7 @@ pub type DdlManagerRef = Arc<DdlManager>;
 
 pub struct DdlManager {
     procedure_manager: ProcedureManagerRef,
-    datanode_manager: DatanodeManagerRef,
+    region_handler: RegionRequestHandlerRef,
     cache_invalidator: CacheInvalidatorRef,
     table_metadata_manager: TableMetadataManagerRef,
     table_meta_allocator: TableMetadataAllocatorRef,
@@ -55,14 +55,14 @@ pub struct DdlManager {
 impl DdlManager {
     pub fn new(
         procedure_manager: ProcedureManagerRef,
-        datanode_clients: DatanodeManagerRef,
+        region_handler: RegionRequestHandlerRef,
         cache_invalidator: CacheInvalidatorRef,
         table_metadata_manager: TableMetadataManagerRef,
         table_meta_allocator: TableMetadataAllocatorRef,
     ) -> Self {
         Self {
             procedure_manager,
-            datanode_manager: datanode_clients,
+            region_handler,
             cache_invalidator,
             table_metadata_manager,
             table_meta_allocator,
@@ -75,7 +75,7 @@ impl DdlManager {
 
     pub fn create_context(&self) -> DdlContext {
         DdlContext {
-            datanode_manager: self.datanode_manager.clone(),
+            region_handler: self.region_handler.clone(),
             cache_invalidator: self.cache_invalidator.clone(),
             table_metadata_manager: self.table_metadata_manager.clone(),
         }

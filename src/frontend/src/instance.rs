@@ -17,9 +17,9 @@ mod influxdb;
 mod opentsdb;
 mod otlp;
 mod prom_store;
-mod region_query;
 mod script;
 mod standalone;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +29,6 @@ use async_trait::async_trait;
 use auth::{PermissionChecker, PermissionCheckerRef, PermissionReq};
 use catalog::kvbackend::{CachedMetaKvBackend, KvBackendCatalogManager};
 use catalog::CatalogManagerRef;
-use client::client_manager::DatanodeClients;
 use common_base::Plugins;
 use common_config::KvStoreConfig;
 use common_error::ext::BoxedError;
@@ -40,6 +39,7 @@ use common_meta::heartbeat::handler::parse_mailbox_message::ParseMailboxMessageH
 use common_meta::heartbeat::handler::HandlerGroupExecutor;
 use common_meta::key::TableMetadataManager;
 use common_meta::kv_backend::KvBackendRef;
+use common_meta::region::DistRegionRequestHandler;
 use common_meta::state_store::KvStateStore;
 use common_procedure::local::{LocalManager, ManagerConfig};
 use common_procedure::options::ProcedureConfig;
@@ -80,10 +80,8 @@ use sql::parser::ParserContext;
 use sql::statements::copy::CopyTable;
 use sql::statements::statement::Statement;
 use sqlparser::ast::ObjectName;
-pub use standalone::StandaloneDatanodeManager;
 
-use self::region_query::FrontendRegionQueryHandler;
-use self::standalone::StandaloneTableMetadataCreator;
+use self::standalone::{StandaloneRegionRequestHandler, StandaloneTableMetadataCreator};
 use crate::error::{
     self, Error, ExecLogicalPlanSnafu, ExecutePromqlSnafu, ExternalSnafu, MissingMetasrvOptsSnafu,
     ParseSqlSnafu, PermissionSnafu, PlanStatementSnafu, Result, SqlExecInterceptedSnafu,
@@ -138,34 +136,28 @@ impl Instance {
     ) -> Result<Self> {
         let meta_client = Self::create_meta_client(opts).await?;
 
-        let datanode_clients = Arc::new(DatanodeClients::default());
-
-        Self::try_new_distributed_with(meta_client, datanode_clients, plugins, opts).await
+        Self::try_new_distributed_with(meta_client, plugins, opts).await
     }
 
     pub async fn try_new_distributed_with(
         meta_client: Arc<MetaClient>,
-        datanode_clients: Arc<DatanodeClients>,
         plugins: Arc<Plugins>,
         opts: &FrontendOptions,
     ) -> Result<Self> {
         let meta_backend = Arc::new(CachedMetaKvBackend::new(meta_client.clone()));
 
-        let catalog_manager = KvBackendCatalogManager::new(
-            meta_backend.clone(),
-            meta_backend.clone(),
-            datanode_clients.clone(),
-        );
+        let catalog_manager =
+            KvBackendCatalogManager::new(meta_backend.clone(), meta_backend.clone());
         let partition_manager = Arc::new(PartitionRuleManager::new(meta_backend.clone()));
 
-        let region_query_handler = FrontendRegionQueryHandler::arc(
-            partition_manager.clone(),
-            catalog_manager.datanode_manager().clone(),
-        );
+        let region_handler = Arc::new(DistRegionRequestHandler::new(
+            ChannelConfig::default(),
+            meta_backend.clone(),
+        ));
 
         let query_engine = QueryEngineFactory::new_with_plugins(
             catalog_manager.clone(),
-            Some(region_query_handler.clone()),
+            Some(region_handler.clone()),
             true,
             plugins.clone(),
         )
@@ -174,12 +166,12 @@ impl Instance {
         let inserter = Arc::new(Inserter::new(
             catalog_manager.clone(),
             partition_manager.clone(),
-            datanode_clients.clone(),
+            region_handler.clone(),
         ));
         let deleter = Arc::new(Deleter::new(
             catalog_manager.clone(),
             partition_manager,
-            datanode_clients,
+            region_handler,
         ));
 
         let statement_executor = Arc::new(StatementExecutor::new(
@@ -296,14 +288,11 @@ impl Instance {
         region_server: RegionServer,
     ) -> Result<Self> {
         let partition_manager = Arc::new(PartitionRuleManager::new(kv_backend.clone()));
-        let datanode_manager = Arc::new(StandaloneDatanodeManager(region_server));
-
-        let region_query_handler =
-            FrontendRegionQueryHandler::arc(partition_manager.clone(), datanode_manager.clone());
+        let region_handler = StandaloneRegionRequestHandler::arc(region_server);
 
         let query_engine = QueryEngineFactory::new_with_plugins(
             catalog_manager.clone(),
-            Some(region_query_handler),
+            Some(region_handler.clone()),
             true,
             plugins.clone(),
         )
@@ -317,23 +306,21 @@ impl Instance {
         let cache_invalidator = Arc::new(DummyCacheInvalidator);
         let ddl_executor = Arc::new(DdlManager::new(
             procedure_manager,
-            datanode_manager.clone(),
+            region_handler.clone(),
             cache_invalidator.clone(),
             table_metadata_manager.clone(),
             Arc::new(StandaloneTableMetadataCreator::new(kv_backend.clone())),
         ));
 
-        let partition_manager = Arc::new(PartitionRuleManager::new(kv_backend.clone()));
-
         let inserter = Arc::new(Inserter::new(
             catalog_manager.clone(),
             partition_manager.clone(),
-            datanode_manager.clone(),
+            region_handler.clone(),
         ));
         let deleter = Arc::new(Deleter::new(
             catalog_manager.clone(),
             partition_manager,
-            datanode_manager,
+            region_handler,
         ));
 
         let statement_executor = Arc::new(StatementExecutor::new(

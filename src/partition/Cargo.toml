@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 api = { workspace = true }
 async-trait = "0.1"
+client = { workspace = true }
 common-catalog = { workspace = true }
 common-error = { workspace = true }
 common-meta = { workspace = true }

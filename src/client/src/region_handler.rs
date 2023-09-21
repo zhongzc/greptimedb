@@ -11,13 +11,22 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-pub mod delete;
-pub mod error;
-pub mod expr_factory;
-pub mod insert;
-pub mod metrics;
-pub mod req_convert;
-pub mod statement;
-pub mod table;
-#[cfg(test)]
-pub(crate) mod tests;
+
+use std::sync::Arc;
+
+use api::v1::region::{QueryRequest, RegionRequest};
+use async_trait::async_trait;
+use common_recordbatch::SendableRecordBatchStream;
+
+use crate::error::Result;
+
+pub type AffectedRows = u64;
+
+#[async_trait]
+pub trait RegionRequestHandler {
+    async fn handle(&self, request: RegionRequest) -> Result<AffectedRows>;
+
+    async fn do_get(&self, request: QueryRequest) -> Result<SendableRecordBatchStream>;
+}
+
+pub type RegionRequestHandlerRef = Arc<dyn RegionRequestHandler + Send + Sync>;

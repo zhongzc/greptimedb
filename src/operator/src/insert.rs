@@ -12,23 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use api::v1::alter_expr::Kind;
-use api::v1::region::{InsertRequests as RegionInsertRequests, RegionRequestHeader};
+use api::v1::region::region_request::Body;
+use api::v1::region::{InsertRequests as RegionInsertRequests, RegionRequest, RegionRequestHeader};
 use api::v1::{
     AlterExpr, ColumnSchema, CreateTableExpr, InsertRequests, RowInsertRequest, RowInsertRequests,
 };
 use catalog::CatalogManagerRef;
+use client::region_handler::{AffectedRows, RegionRequestHandlerRef};
 use common_catalog::consts::default_engine;
 use common_grpc_expr::util::{extract_new_columns, ColumnExpr};
-use common_meta::datanode_manager::{AffectedRows, DatanodeManagerRef};
-use common_meta::peer::Peer;
 use common_query::Output;
 use common_telemetry::{error, info};
 use datatypes::schema::Schema;
-use futures_util::future;
 use metrics::counter;
 use partition::manager::PartitionRuleManagerRef;
 use session::context::QueryContextRef;
@@ -39,18 +37,17 @@ use table::requests::InsertRequest as TableInsertRequest;
 use table::TableRef;
 
 use crate::error::{
-    CatalogSnafu, FindNewColumnsOnInsertionSnafu, FindRegionLeaderSnafu, InvalidInsertRequestSnafu,
-    JoinTaskSnafu, RequestInsertsSnafu, Result, TableNotFoundSnafu,
+    CatalogSnafu, FindNewColumnsOnInsertionSnafu, InvalidInsertRequestSnafu, RequestInsertsSnafu,
+    Result, TableNotFoundSnafu,
 };
 use crate::expr_factory::CreateExprFactory;
-use crate::region_req_factory::RegionRequestFactory;
 use crate::req_convert::insert::{ColumnToRow, RowToRegion, StatementToRegion, TableToRegion};
 use crate::statement::StatementExecutor;
 
 pub struct Inserter {
     catalog_manager: CatalogManagerRef,
     partition_manager: PartitionRuleManagerRef,
-    datanode_manager: DatanodeManagerRef,
+    region_handler: RegionRequestHandlerRef,
 }
 
 pub type InserterRef = Arc<Inserter>;
@@ -59,12 +56,12 @@ impl Inserter {
     pub fn new(
         catalog_manager: CatalogManagerRef,
         partition_manager: PartitionRuleManagerRef,
-        datanode_manager: DatanodeManagerRef,
+        region_handler: RegionRequestHandlerRef,
     ) -> Self {
         Self {
             catalog_manager,
             partition_manager,
-            datanode_manager,
+            region_handler,
         }
     }
 
@@ -96,6 +93,7 @@ impl Inserter {
 
         self.create_or_alter_tables_on_demand(&requests, &ctx, statement_executor)
             .await?;
+
         let inserts = RowToRegion::new(
             self.catalog_manager.as_ref(),
             self.partition_manager.as_ref(),
@@ -153,47 +151,17 @@ impl Inserter {
         span_id: u64,
     ) -> Result<AffectedRows> {
         let header = RegionRequestHeader { trace_id, span_id };
-        let request_factory = RegionRequestFactory::new(header);
-
-        let tasks = self
-            .group_requests_by_peer(requests)
-            .await?
-            .into_iter()
-            .map(|(peer, inserts)| {
-                let request = request_factory.build_insert(inserts);
-                let datanode_manager = self.datanode_manager.clone();
-                common_runtime::spawn_write(async move {
-                    datanode_manager
-                        .datanode(&peer)
-                        .await
-                        .handle(request)
-                        .await
-                        .context(RequestInsertsSnafu)
-                })
-            });
-        let results = future::try_join_all(tasks).await.context(JoinTaskSnafu)?;
-
-        let affected_rows = results.into_iter().sum::<Result<u64>>()?;
+        let request = RegionRequest {
+            header: Some(header),
+            body: Some(Body::Inserts(requests)),
+        };
+        let affected_rows = self
+            .region_handler
+            .handle(request)
+            .await
+            .context(RequestInsertsSnafu)?;
         counter!(crate::metrics::DIST_INGEST_ROW_COUNT, affected_rows);
         Ok(affected_rows)
-    }
-
-    async fn group_requests_by_peer(
-        &self,
-        requests: RegionInsertRequests,
-    ) -> Result<HashMap<Peer, RegionInsertRequests>> {
-        let mut inserts: HashMap<Peer, RegionInsertRequests> = HashMap::new();
-
-        for req in requests.requests {
-            let peer = self
-                .partition_manager
-                .find_region_leader(req.region_id.into())
-                .await
-                .context(FindRegionLeaderSnafu)?;
-            inserts.entry(peer).or_default().requests.push(req);
-        }
-
-        Ok(inserts)
     }
 
     // check if tables already exist:

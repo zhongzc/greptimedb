@@ -17,20 +17,16 @@ use common_procedure::error::Error as ProcedureError;
 use snafu::{location, Location};
 
 use crate::error::{self, Error};
-use crate::peer::Peer;
 
-pub fn handle_operate_region_error(datanode: Peer) -> impl FnOnce(crate::error::Error) -> Error {
-    move |err| {
-        if matches!(err, crate::error::Error::RetryLater { .. }) {
-            error::Error::RetryLater {
-                source: BoxedError::new(err),
-            }
-        } else {
-            error::Error::OperateDatanode {
-                location: location!(),
-                peer: datanode,
-                source: BoxedError::new(err),
-            }
+pub fn handle_operate_region_error(err: client::error::Error) -> Error {
+    if matches!(err, client::error::Error::RegionServer { .. }) {
+        error::Error::RetryLater {
+            source: BoxedError::new(err),
+        }
+    } else {
+        error::Error::OperateDatanode {
+            location: location!(),
+            source: BoxedError::new(err),
         }
     }
 }

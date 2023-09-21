@@ -12,8 +12,10 @@ api = { workspace = true }
 arrow-flight.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
+client = { workspace = true }
 common-catalog = { workspace = true }
 common-error = { workspace = true }
+common-grpc = { workspace = true }
 common-grpc-expr.workspace = true
 common-procedure = { workspace = true }
 common-recordbatch = { workspace = true }
@@ -26,6 +28,7 @@ futures.workspace = true
 humantime-serde.workspace = true
 lazy_static.workspace = true
 metrics.workspace = true
+moka = { version = "0.9", features = ["future"] }
 prost.workspace = true
 regex.workspace = true
 serde.workspace = true

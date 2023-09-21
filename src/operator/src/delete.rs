@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::{iter, mem};
 
-use api::v1::region::{DeleteRequests as RegionDeleteRequests, RegionRequestHeader};
+use api::v1::region::region_request::Body;
+use api::v1::region::{DeleteRequests as RegionDeleteRequests, RegionRequest, RegionRequestHeader};
 use api::v1::{DeleteRequests, RowDeleteRequests};
 use catalog::CatalogManagerRef;
-use common_meta::datanode_manager::{AffectedRows, DatanodeManagerRef};
-use common_meta::peer::Peer;
+use client::region_handler::{AffectedRows, RegionRequestHandlerRef};
 use common_query::Output;
-use futures_util::future;
 use metrics::counter;
 use partition::manager::PartitionRuleManagerRef;
 use session::context::QueryContextRef;
@@ -31,16 +30,15 @@ use table::requests::DeleteRequest as TableDeleteRequest;
 use table::TableRef;
 
 use crate::error::{
-    CatalogSnafu, FindRegionLeaderSnafu, InvalidDeleteRequestSnafu, JoinTaskSnafu,
-    MissingTimeIndexColumnSnafu, RequestDeletesSnafu, Result, TableNotFoundSnafu,
+    CatalogSnafu, InvalidDeleteRequestSnafu, MissingTimeIndexColumnSnafu, RequestDeletesSnafu,
+    Result, TableNotFoundSnafu,
 };
-use crate::region_req_factory::RegionRequestFactory;
 use crate::req_convert::delete::{ColumnToRow, RowToRegion, TableToRegion};
 
 pub struct Deleter {
     catalog_manager: CatalogManagerRef,
     partition_manager: PartitionRuleManagerRef,
-    datanode_manager: DatanodeManagerRef,
+    region_handler: RegionRequestHandlerRef,
 }
 
 pub type DeleterRef = Arc<Deleter>;
@@ -49,12 +47,12 @@ impl Deleter {
     pub fn new(
         catalog_manager: CatalogManagerRef,
         partition_manager: PartitionRuleManagerRef,
-        datanode_manager: DatanodeManagerRef,
+        region_handler: RegionRequestHandlerRef,
     ) -> Self {
         Self {
             catalog_manager,
             partition_manager,
-            datanode_manager,
+            region_handler,
         }
     }
 
@@ -120,47 +118,17 @@ impl Deleter {
         span_id: u64,
     ) -> Result<AffectedRows> {
         let header = RegionRequestHeader { trace_id, span_id };
-        let request_factory = RegionRequestFactory::new(header);
-
-        let tasks = self
-            .group_requests_by_peer(requests)
-            .await?
-            .into_iter()
-            .map(|(peer, deletes)| {
-                let request = request_factory.build_delete(deletes);
-                let datanode_manager = self.datanode_manager.clone();
-                common_runtime::spawn_write(async move {
-                    datanode_manager
-                        .datanode(&peer)
-                        .await
-                        .handle(request)
-                        .await
-                        .context(RequestDeletesSnafu)
-                })
-            });
-        let results = future::try_join_all(tasks).await.context(JoinTaskSnafu)?;
-
-        let affected_rows = results.into_iter().sum::<Result<u64>>()?;
+        let request = RegionRequest {
+            header: Some(header),
+            body: Some(Body::Deletes(requests)),
+        };
+        let affected_rows = self
+            .region_handler
+            .handle(request)
+            .await
+            .context(RequestDeletesSnafu)?;
         counter!(crate::metrics::DIST_DELETE_ROW_COUNT, affected_rows);
         Ok(affected_rows)
-    }
-
-    async fn group_requests_by_peer(
-        &self,
-        requests: RegionDeleteRequests,
-    ) -> Result<HashMap<Peer, RegionDeleteRequests>> {
-        let mut deletes: HashMap<Peer, RegionDeleteRequests> = HashMap::new();
-
-        for req in requests.requests {
-            let peer = self
-                .partition_manager
-                .find_region_leader(req.region_id.into())
-                .await
-                .context(FindRegionLeaderSnafu)?;
-            deletes.entry(peer).or_default().requests.push(req);
-        }
-
-        Ok(deletes)
     }
 
     async fn trim_columns(

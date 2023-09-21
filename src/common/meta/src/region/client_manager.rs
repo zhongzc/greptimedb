@@ -12,44 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 use std::time::Duration;
 
+use client::Client;
 use common_grpc::channel_manager::{ChannelConfig, ChannelManager};
-use common_meta::datanode_manager::{Datanode, DatanodeManager};
-use common_meta::peer::Peer;
 use moka::future::{Cache, CacheBuilder};
 
-use crate::region::RegionRequester;
-use crate::Client;
+use crate::peer::Peer;
 
 pub struct DatanodeClients {
     channel_manager: ChannelManager,
     clients: Cache<Peer, Client>,
-}
-
-impl Default for DatanodeClients {
-    fn default() -> Self {
-        Self::new(ChannelConfig::new())
-    }
-}
-
-impl Debug for DatanodeClients {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatanodeClients")
-            .field("channel_manager", &self.channel_manager)
-            .finish()
-    }
-}
-
-#[async_trait::async_trait]
-impl DatanodeManager for DatanodeClients {
-    async fn datanode(&self, datanode: &Peer) -> Arc<dyn Datanode> {
-        let client = self.get_client(datanode).await;
-
-        Arc::new(RegionRequester::new(client))
-    }
 }
 
 impl DatanodeClients {

@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use api::v1::region::{
-    region_request, DropRequest as PbDropRegionRequest, RegionRequest, RegionRequestHeader,
-};
+use api::v1::region::region_request::Body;
+use api::v1::region::{DropRequest as PbDropRegionRequest, RegionRequest, RegionRequestHeader};
 use async_trait::async_trait;
 use common_error::ext::ErrorExt;
 use common_error::status_code::StatusCode;
@@ -22,11 +21,10 @@ use common_procedure::error::{FromJsonSnafu, ToJsonSnafu};
 use common_procedure::{
     Context as ProcedureContext, LockKey, Procedure, Result as ProcedureResult, Status,
 };
-use common_telemetry::{debug, info};
-use futures::future::join_all;
+use common_telemetry::info;
+use futures::future;
 use serde::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt};
-use store_api::storage::RegionId;
 use strum::AsRefStr;
 use table::engine::TableReference;
 use table::metadata::{RawTableInfo, TableId};
@@ -41,7 +39,7 @@ use crate::key::table_name::TableNameKey;
 use crate::key::table_route::TableRouteValue;
 use crate::metrics;
 use crate::rpc::ddl::DropTableTask;
-use crate::rpc::router::{find_leader_regions, find_leaders, RegionRoute};
+use crate::rpc::router::RegionRoute;
 
 pub struct DropTableProcedure {
     pub context: DdlContext,
@@ -135,49 +133,34 @@ impl DropTableProcedure {
     }
 
     pub async fn on_datanode_drop_regions(&self) -> Result<Status> {
-        let table_id = self.data.table_id();
-
-        let region_routes = &self.data.region_routes();
-        let leaders = find_leaders(region_routes);
-        let mut drop_region_tasks = Vec::with_capacity(leaders.len());
-
-        for datanode in leaders {
-            let requester = self.context.datanode_manager.datanode(&datanode).await;
-
-            let regions = find_leader_regions(region_routes, &datanode);
-            let region_ids = regions
-                .iter()
-                .map(|region_number| RegionId::new(table_id, *region_number))
-                .collect::<Vec<_>>();
-
-            for region_id in region_ids {
-                debug!("Dropping region {region_id} on Datanode {datanode:?}");
-
-                let request = RegionRequest {
-                    header: Some(RegionRequestHeader {
-                        trace_id: 0,
-                        span_id: 0,
-                    }),
-                    body: Some(region_request::Body::Drop(PbDropRegionRequest {
-                        region_id: region_id.as_u64(),
-                    })),
+        let requests = self.data.region_routes().iter().filter_map(|route| {
+            route.leader_peer.is_some().then(|| {
+                let header = RegionRequestHeader {
+                    trace_id: common_telemetry::trace_id().unwrap_or_default(),
+                    ..Default::default()
                 };
+                RegionRequest {
+                    header: Some(header),
+                    body: Some(Body::Drop(PbDropRegionRequest {
+                        region_id: route.region.id.as_u64(),
+                    })),
+                }
+            })
+        });
 
-                let datanode = datanode.clone();
-                let requester = requester.clone();
-
-                drop_region_tasks.push(async move {
-                    if let Err(err) = requester.handle(request).await {
-                        if err.status_code() != StatusCode::RegionNotFound {
-                            return Err(handle_operate_region_error(datanode)(err));
-                        }
+        let tasks = requests.map(|request| {
+            let request_handler = self.context.region_handler.clone();
+            async move {
+                if let Err(err) = request_handler.handle(request).await {
+                    if err.status_code() != StatusCode::RegionNotFound {
+                        return Err(handle_operate_region_error(err));
                     }
-                    Ok(())
-                });
+                }
+                Ok(())
             }
-        }
+        });
 
-        join_all(drop_region_tasks)
+        future::join_all(tasks)
             .await
             .into_iter()
             .collect::<Result<Vec<_>>>()?;
