@@ -44,56 +44,48 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display(
-        "Failed to register procedure loader, type name: {}, source: {}",
-        type_name,
-        source
-    ))]
+    #[snafu(display("Failed to register procedure loader, type name: {}", type_name))]
     RegisterProcedureLoader {
         type_name: String,
         location: Location,
         source: common_procedure::error::Error,
     },
 
-    #[snafu(display("Failed to submit procedure, source: {source}"))]
+    #[snafu(display("Failed to submit procedure"))]
     SubmitProcedure {
         location: Location,
         source: common_procedure::Error,
     },
 
-    #[snafu(display("Unsupported operation {}, location: {}", operation, location))]
+    #[snafu(display("Unsupported operation {}", operation))]
     Unsupported {
         operation: String,
         location: Location,
     },
 
-    #[snafu(display("Failed to wait procedure done, source: {source}"))]
+    #[snafu(display("Failed to wait procedure done"))]
     WaitProcedure {
         location: Location,
         source: common_procedure::Error,
     },
 
-    #[snafu(display("Failed to convert RawTableInfo into TableInfo: {}", source))]
+    #[snafu(display("Failed to convert RawTableInfo into TableInfo"))]
     ConvertRawTableInfo {
         location: Location,
         source: datatypes::Error,
     },
 
-    #[snafu(display("Primary key '{key}' not found when creating region request, at {location}"))]
+    #[snafu(display("Primary key '{key}' not found when creating region request"))]
     PrimaryKeyNotFound { key: String, location: Location },
 
-    #[snafu(display(
-        "Failed to build table meta for table: {}, source: {}",
-        table_name,
-        source
-    ))]
+    #[snafu(display("Failed to build table meta for table: {}", table_name))]
     BuildTableMeta {
         table_name: String,
         source: table::metadata::TableMetaBuilderError,
         location: Location,
     },
 
-    #[snafu(display("Table occurs error, source: {}", source))]
+    #[snafu(display("Table occurs error"))]
     Table {
         location: Location,
         source: table::error::Error,
@@ -111,19 +103,19 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Failed to decode protobuf, source: {}", source))]
+    #[snafu(display("Failed to decode protobuf"))]
     DecodeProto {
         location: Location,
         source: prost::DecodeError,
     },
 
-    #[snafu(display("Failed to encode object into json, source: {}", source))]
+    #[snafu(display("Failed to encode object into json"))]
     EncodeJson {
         location: Location,
         source: JsonError,
     },
 
-    #[snafu(display("Failed to decode object from json, source: {}", source))]
+    #[snafu(display("Failed to decode object from json"))]
     DecodeJson {
         location: Location,
         source: JsonError,
@@ -135,7 +127,7 @@ pub enum Error {
     #[snafu(display("Failed to send message: {err_msg}"))]
     SendMessage { err_msg: String, location: Location },
 
-    #[snafu(display("Failed to serde json, source: {}", source))]
+    #[snafu(display("Failed to serde json"))]
     SerdeJson {
         source: serde_json::error::Error,
         location: Location,
@@ -158,13 +150,13 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Failed to convert alter table request, source: {source}, at {location}"))]
+    #[snafu(display("Failed to convert alter table request"))]
     ConvertAlterTableRequest {
         source: common_grpc_expr::error::Error,
         location: Location,
     },
 
-    #[snafu(display("Invalid protobuf message: {err_msg}, at {location}"))]
+    #[snafu(display("Invalid protobuf message: {err_msg}"))]
     InvalidProtoMsg { err_msg: String, location: Location },
 
     #[snafu(display("Unexpected: {err_msg}"))]
@@ -186,7 +178,7 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Failed to convert raw key to str, source: {}", source))]
+    #[snafu(display("Failed to convert raw key to str"))]
     ConvertRawKey {
         location: Location,
         source: Utf8Error,
@@ -226,31 +218,31 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Invalid catalog value, source: {}", source))]
+    #[snafu(display("Invalid catalog value"))]
     InvalidCatalogValue {
         source: common_catalog::error::Error,
         location: Location,
     },
 
-    #[snafu(display("{}", source))]
+    #[snafu(display("External error"))]
     External {
         location: Location,
         source: BoxedError,
     },
 
-    #[snafu(display("Invalid heartbeat response, location: {}", location))]
+    #[snafu(display("Invalid heartbeat response"))]
     InvalidHeartbeatResponse { location: Location },
 
-    #[snafu(display("Failed to operate datanode, source: {}", source))]
+    #[snafu(display("Failed to operate datanode"))]
     OperateDatanode {
         location: Location,
         source: BoxedError,
     },
 
-    #[snafu(display("Retry later, source: {}", source))]
+    #[snafu(display("Retry later"))]
     RetryLater { source: BoxedError },
 
-    #[snafu(display("Failed to join task, source: {}", source))]
+    #[snafu(display("Failed to join task"))]
     JoinTask {
         source: common_runtime::JoinError,
         location: Location,
