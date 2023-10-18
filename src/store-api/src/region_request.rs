@@ -40,6 +40,7 @@ pub enum RegionRequest {
     Flush(RegionFlushRequest),
     Compact(RegionCompactRequest),
     Truncate(RegionTruncateRequest),
+    BuildIndex(RegionBuildIndexRequest),
 }
 
 impl RegionRequest {
@@ -57,6 +58,7 @@ impl RegionRequest {
             RegionRequest::Flush(_) => "flush",
             RegionRequest::Compact(_) => "compact",
             RegionRequest::Truncate(_) => "truncate",
+            RegionRequest::BuildIndex(_) => "build_index",
         }
     }
 
@@ -451,6 +453,9 @@ pub struct RegionCompactRequest {}
 #[derive(Debug)]
 pub struct RegionTruncateRequest {}
 
+#[derive(Debug)]
+pub struct RegionBuildIndexRequest {}
+
 impl fmt::Display for RegionRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -464,6 +469,7 @@ impl fmt::Display for RegionRequest {
             RegionRequest::Flush(_) => write!(f, "Flush"),
             RegionRequest::Compact(_) => write!(f, "Compact"),
             RegionRequest::Truncate(_) => write!(f, "Truncate"),
+            RegionRequest::BuildIndex(_) => write!(f, "BuildIndex"),
         }
     }
 }

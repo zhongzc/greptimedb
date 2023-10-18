@@ -12,13 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
-use object_store::{util, ObjectStore};
+use async_compat::CompatExt;
+use common_telemetry::info;
+use object_store::{util, BlockingReader, ObjectStore};
+use parquet::file::reader::{ChunkReader, FileReader, Length};
+use parquet::file::serialized_reader::SerializedFileReader;
 use snafu::ResultExt;
 use store_api::metadata::RegionMetadataRef;
 
-use crate::error::{DeleteSstSnafu, Result};
+use crate::error::{DeleteSstSnafu, OpenDalSnafu, ReadParquetSnafu, Result};
 use crate::read::Source;
 use crate::sst::file::{FileHandle, FileId};
 use crate::sst::parquet::reader::ParquetReaderBuilder;
@@ -73,6 +79,17 @@ impl AccessLayer {
         ParquetReaderBuilder::new(self.region_dir.clone(), file, self.object_store.clone())
     }
 
+    pub(crate) fn sst_file_reader(&self, file: FileHandle) -> Arc<dyn FileReader> {
+        let file_path = file.file_path(&self.region_dir);
+        let chunk_reader = ChunkReaderAdapter {
+            object_store: self.object_store.clone(),
+            file_path,
+        };
+        let file_reader =
+            SerializedFileReader::new(chunk_reader).expect("Failed to create file reader");
+        Arc::new(file_reader)
+    }
+
     /// Returns a new parquet writer to write the SST for specific `file_id`.
     // TODO(hl): maybe rename to [sst_writer].
     pub(crate) fn write_sst(
@@ -88,5 +105,57 @@ impl AccessLayer {
     /// Returns the `file_path` for the `file_name` in the object store.
     fn sst_file_path(&self, file_name: &str) -> String {
         util::join_path(&self.region_dir, file_name)
+    }
+}
+
+struct ChunkReaderAdapter {
+    object_store: ObjectStore,
+    file_path: String,
+}
+
+impl ChunkReader for ChunkReaderAdapter {
+    type T = BlockingReader;
+
+    fn get_read(&self, start: u64) -> parquet::errors::Result<Self::T> {
+        let mut reader = self
+            .object_store
+            .blocking()
+            .reader(&self.file_path)
+            .expect("Failed to create reader");
+        reader.seek(SeekFrom::Start(start)).expect("Failed to seek");
+        Ok(reader)
+    }
+
+    fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<bytes::Bytes> {
+        let mut reader = self
+            .object_store
+            .blocking()
+            .reader(&self.file_path)
+            .expect("Failed to create reader");
+        reader.seek(SeekFrom::Start(start)).expect("Failed to seek");
+        let mut buffer = Vec::with_capacity(length);
+        let read = std::io::Read::take(reader, length as _)
+            .read_to_end(&mut buffer)
+            .expect("Failed to read");
+
+        if read != length {
+            return Err(parquet::errors::ParquetError::General(format!(
+                "Expected to read {} bytes, read only {}",
+                length, read
+            )));
+        }
+
+        Ok(buffer.into())
+    }
+}
+
+impl Length for ChunkReaderAdapter {
+    fn len(&self) -> u64 {
+        let metadata = self
+            .object_store
+            .blocking()
+            .stat(&self.file_path)
+            .expect("Failed to get metadata");
+        metadata.content_length()
     }
 }

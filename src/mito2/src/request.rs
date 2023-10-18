@@ -35,8 +35,9 @@ use smallvec::SmallVec;
 use snafu::{ensure, OptionExt, ResultExt};
 use store_api::metadata::{ColumnMetadata, RegionMetadata};
 use store_api::region_request::{
-    RegionAlterRequest, RegionCloseRequest, RegionCompactRequest, RegionCreateRequest,
-    RegionDropRequest, RegionFlushRequest, RegionOpenRequest, RegionRequest, RegionTruncateRequest,
+    RegionAlterRequest, RegionBuildIndexRequest, RegionCloseRequest, RegionCompactRequest,
+    RegionCreateRequest, RegionDropRequest, RegionFlushRequest, RegionOpenRequest, RegionRequest,
+    RegionTruncateRequest,
 };
 use store_api::storage::{RegionId, SequenceNumber};
 use tokio::sync::oneshot::{self, Receiver, Sender};
@@ -535,6 +536,11 @@ impl WorkerRequest {
                 sender: sender.into(),
                 request: DdlRequest::Truncate(v),
             }),
+            RegionRequest::BuildIndex(v) => WorkerRequest::Ddl(SenderDdlRequest {
+                region_id,
+                sender: sender.into(),
+                request: DdlRequest::BuildIndex(v),
+            }),
         };
 
         Ok((worker_request, receiver))
@@ -552,6 +558,7 @@ pub(crate) enum DdlRequest {
     Flush(RegionFlushRequest),
     Compact(RegionCompactRequest),
     Truncate(RegionTruncateRequest),
+    BuildIndex(RegionBuildIndexRequest),
 }
 
 /// Sender and Ddl request.

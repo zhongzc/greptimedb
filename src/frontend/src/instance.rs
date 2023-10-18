@@ -126,6 +126,7 @@ pub struct Instance {
     heartbeat_task: Option<HeartbeatTask>,
     inserter: InserterRef,
     deleter: DeleterRef,
+    region_server: Option<RegionServer>,
 }
 
 impl Instance {
@@ -219,6 +220,7 @@ impl Instance {
             heartbeat_task,
             inserter,
             deleter,
+            region_server: None,
         })
     }
 
@@ -293,7 +295,7 @@ impl Instance {
         region_server: RegionServer,
     ) -> Result<Self> {
         let partition_manager = Arc::new(PartitionRuleManager::new(kv_backend.clone()));
-        let datanode_manager = Arc::new(StandaloneDatanodeManager(region_server));
+        let datanode_manager = Arc::new(StandaloneDatanodeManager(region_server.clone()));
 
         let region_query_handler =
             FrontendRegionQueryHandler::arc(partition_manager.clone(), datanode_manager.clone());
@@ -355,11 +357,18 @@ impl Instance {
             heartbeat_task: None,
             inserter,
             deleter,
+            region_server: Some(region_server),
         })
     }
 
     pub async fn build_servers(&mut self, opts: &FrontendOptions) -> Result<()> {
-        let servers = Services::build(opts, Arc::new(self.clone()), self.plugins.clone()).await?;
+        let servers = Services::build(
+            opts,
+            Arc::new(self.clone()),
+            self.region_server.clone(),
+            self.plugins.clone(),
+        )
+        .await?;
         self.servers = Arc::new(servers);
 
         Ok(())

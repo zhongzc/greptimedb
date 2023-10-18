@@ -20,6 +20,8 @@ use auth::UserProviderRef;
 use common_base::Plugins;
 use common_runtime::Builder as RuntimeBuilder;
 use common_telemetry::info;
+use datanode::region_server::RegionServer;
+use datanode::server::build_index_handler;
 use servers::error::InternalIoSnafu;
 use servers::grpc::{GrpcServer, GrpcServerConfig};
 use servers::http::HttpServerBuilder;
@@ -46,6 +48,7 @@ impl Services {
     pub(crate) async fn build<T>(
         opts: &FrontendOptions,
         instance: Arc<T>,
+        region_server: Option<RegionServer>,
         plugins: Plugins,
     ) -> Result<ServerHandlers>
     where
@@ -114,6 +117,17 @@ impl Services {
 
             if opts.otlp.enable {
                 let _ = http_server_builder.with_otlp_handler(instance.clone());
+            }
+
+            if let Some(region_server) = region_server {
+                http_server_builder.push_register(Arc::new(move |router| {
+                    router.nest(
+                        "/build-index",
+                        axum::Router::new()
+                            .route("/:region_id", axum::routing::post(build_index_handler))
+                            .with_state(region_server.clone()),
+                    )
+                }));
             }
 
             let http_server = http_server_builder

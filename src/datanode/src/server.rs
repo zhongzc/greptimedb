@@ -15,12 +15,20 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::extract::{Path, State};
+use axum::response::IntoResponse;
+use axum::{routing, Json, Router};
+use common_error::ext::ErrorExt;
 use futures::future;
+use hyper::StatusCode;
+use serde_json::json;
 use servers::grpc::{GrpcServer, GrpcServerConfig};
 use servers::http::{HttpServer, HttpServerBuilder};
 use servers::metrics_handler::MetricsHandler;
 use servers::server::Server;
 use snafu::ResultExt;
+use store_api::region_request::{RegionBuildIndexRequest, RegionRequest};
+use store_api::storage::RegionId;
 
 use crate::config::DatanodeOptions;
 use crate::error::{
@@ -57,6 +65,14 @@ impl Services {
             http_server: HttpServerBuilder::new(opts.http.clone())
                 .with_metrics_handler(MetricsHandler)
                 .with_greptime_config_options(opts.to_toml_string())
+                .push_register(Arc::new(move |router| {
+                    router.nest(
+                        "/build-index",
+                        Router::new()
+                            .route("/:region_id", routing::post(build_index_handler))
+                            .with_state(region_server.clone()),
+                    )
+                }))
                 .build(),
         })
     }
@@ -91,5 +107,28 @@ impl Services {
             .await
             .context(ShutdownServerSnafu)?;
         Ok(())
+    }
+}
+
+#[axum_macros::debug_handler]
+pub async fn build_index_handler(
+    State(region_server): State<RegionServer>,
+    Path(region_id): Path<RegionId>,
+) -> axum::response::Response {
+    let res = region_server
+        .handle_request(
+            region_id,
+            RegionRequest::BuildIndex(RegionBuildIndexRequest {}),
+        )
+        .await;
+
+    match res {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(err) => {
+            let body = Json(json!({
+                "error": err.output_msg()
+            }));
+            (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+        }
     }
 }

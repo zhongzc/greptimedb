@@ -15,6 +15,7 @@
 //! Structs and utilities for writing regions.
 
 mod handle_alter;
+mod handle_build_index;
 mod handle_close;
 mod handle_compaction;
 mod handle_create;
@@ -541,6 +542,11 @@ impl<S: LogStore> RegionWorkerLoop<S> {
                 }
                 DdlRequest::Compact(_) => {
                     self.handle_compaction_request(ddl.region_id, ddl.sender);
+                    continue;
+                }
+                DdlRequest::BuildIndex(_) => {
+                    self.handle_build_index_request(ddl.region_id, ddl.sender)
+                        .await;
                     continue;
                 }
                 DdlRequest::Truncate(_) => self.handle_truncate_request(ddl.region_id).await,

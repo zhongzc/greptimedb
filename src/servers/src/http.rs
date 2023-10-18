@@ -28,6 +28,7 @@ pub mod script;
 mod dashboard;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aide::axum::{routing as apirouting, ApiRouter, IntoApiResponse};
@@ -101,12 +102,17 @@ pub struct HttpServer {
     prometheus_handler: Option<PrometheusHandlerRef>,
     otlp_handler: Option<OpenTelemetryProtocolHandlerRef>,
     script_handler: Option<ScriptHandlerRef>,
+
+    registers: Vec<Register>,
+
     shutdown_tx: Mutex<Option<Sender<()>>>,
     user_provider: Option<UserProviderRef>,
     metrics_handler: Option<MetricsHandler>,
     greptime_config_options: Option<String>,
     plugins: Plugins,
 }
+
+pub type Register = Arc<dyn Fn(Router) -> Router + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -382,6 +388,7 @@ impl HttpServerBuilder {
                 user_provider: None,
                 script_handler: None,
                 metrics_handler: None,
+                registers: vec![],
                 shutdown_tx: Mutex::new(None),
                 greptime_config_options: None,
                 plugins: Default::default(),
@@ -426,6 +433,11 @@ impl HttpServerBuilder {
 
     pub fn with_otlp_handler(&mut self, handler: OpenTelemetryProtocolHandlerRef) -> &mut Self {
         let _ = self.inner.otlp_handler.get_or_insert(handler);
+        self
+    }
+
+    pub fn push_register(&mut self, register: Register) -> &mut Self {
+        self.inner.registers.push(register);
         self
     }
 
@@ -539,6 +551,10 @@ impl HttpServer {
         router = router.nest("", config_router);
 
         router = router.route("/status", routing::get(handler::status));
+
+        for register in &self.registers {
+            router = register(router);
+        }
 
         #[cfg(feature = "dashboard")]
         {
