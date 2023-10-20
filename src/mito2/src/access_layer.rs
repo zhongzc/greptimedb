@@ -16,15 +16,14 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
-use async_compat::CompatExt;
-use common_telemetry::info;
-use object_store::{util, BlockingReader, ObjectStore};
+use object_store::util::join_path;
+use object_store::{util, BlockingReader, BlockingWriter, ObjectStore};
 use parquet::file::reader::{ChunkReader, FileReader, Length};
 use parquet::file::serialized_reader::SerializedFileReader;
 use snafu::ResultExt;
 use store_api::metadata::RegionMetadataRef;
 
-use crate::error::{DeleteSstSnafu, OpenDalSnafu, ReadParquetSnafu, Result};
+use crate::error::{DeleteSstSnafu, Result};
 use crate::read::Source;
 use crate::sst::file::{FileHandle, FileId};
 use crate::sst::parquet::reader::ParquetReaderBuilder;
@@ -88,6 +87,26 @@ impl AccessLayer {
         let file_reader =
             SerializedFileReader::new(chunk_reader).expect("Failed to create file reader");
         Arc::new(file_reader)
+    }
+
+    //
+    pub(crate) fn new_index_writer(&self, file_id: &FileId) -> Option<BlockingWriter> {
+        let file_path = join_path(&self.region_dir, &format!("{}.index", file_id));
+        if self
+            .object_store
+            .blocking()
+            .is_exist(&file_path)
+            .expect("Failed to check index file existence")
+        {
+            None
+        } else {
+            Some(
+                self.object_store
+                    .blocking()
+                    .writer(&file_path)
+                    .expect("Failed to create index writer"),
+            )
+        }
     }
 
     /// Returns a new parquet writer to write the SST for specific `file_id`.

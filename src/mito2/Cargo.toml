@@ -58,6 +58,8 @@ table = { workspace = true }
 tokio-util.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+roaring = { version = "0.10.2" }
+fst = { version = "0.4.7" }
 
 [dev-dependencies]
 common-procedure-test = { workspace = true }
