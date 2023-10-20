@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use common_query::logical_plan::{DfExpr, Expr};
 use common_telemetry::{debug, error, warn};
-use common_time::range::TimestampRange;
+use common_time::range::{BytesRange, GenericRange, TimestampRange};
 use common_time::timestamp::TimeUnit;
 use common_time::Timestamp;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -411,6 +411,221 @@ impl<'a> TimeRangePredicateBuilder<'a> {
             }
         }
         Some(init_range)
+    }
+}
+
+/// `BytesRangePredicateBuilder` extracts time range from logical exprs to facilitate fast
+/// time range pruning.
+pub struct BytesRangePredicateBuilder<'a> {
+    col_name: &'a str,
+    filters: &'a [Expr],
+}
+
+impl<'a> BytesRangePredicateBuilder<'a> {
+    pub fn new(col_name: &'a str, filters: &'a [Expr]) -> Self {
+        Self { col_name, filters }
+    }
+    pub fn build(&self) -> BytesRange {
+        let mut res = GenericRange::min_to_max();
+        for expr in self.filters {
+            let range = self
+                .extract_bytes_range_from_expr(expr.df_expr())
+                .unwrap_or_else(GenericRange::min_to_max);
+            res = res.and(&range);
+        }
+        res
+    }
+
+    /// Extract time range filter from `WHERE`/`IN (...)`/`BETWEEN` clauses.
+    /// Return None if no time range can be found in expr.
+    fn extract_bytes_range_from_expr(&self, expr: &DfExpr) -> Option<BytesRange> {
+        match expr {
+            DfExpr::BinaryExpr(BinaryExpr { left, op, right }) => {
+                self.extract_from_binary_expr(left, op, right)
+            }
+            DfExpr::Between(Between {
+                expr,
+                negated,
+                low,
+                high,
+            }) => self.extract_from_between_expr(expr, negated, low, high),
+            DfExpr::InList(InList {
+                expr,
+                list,
+                negated,
+            }) => self.extract_from_in_list_expr(expr, *negated, list),
+            _ => None,
+        }
+    }
+
+    fn extract_from_binary_expr(
+        &self,
+        left: &DfExpr,
+        op: &Operator,
+        right: &DfExpr,
+    ) -> Option<BytesRange> {
+        match op {
+            Operator::Eq => self
+                .get_bytes_filter(left, right)
+                .map(|(bytes, _)| BytesRange::single(bytes)),
+            Operator::Lt => {
+                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                if reverse {
+                    Some(BytesRange::from_start(bytes, true))
+                } else {
+                    Some(BytesRange::until_end(bytes, false))
+                }
+            }
+            Operator::LtEq => {
+                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                if reverse {
+                    Some(BytesRange::from_start(bytes, true))
+                } else {
+                    Some(BytesRange::until_end(bytes, true))
+                }
+            }
+            Operator::Gt => {
+                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                if reverse {
+                    // [lit] > ts_col
+                    Some(BytesRange::until_end(bytes, false))
+                } else {
+                    // ts_col > [lit]
+                    Some(BytesRange::from_start(bytes, false))
+                }
+            }
+            Operator::GtEq => {
+                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                if reverse {
+                    // [lit] >= ts_col
+                    Some(BytesRange::until_end(bytes, true))
+                } else {
+                    // ts_col >= [lit]
+                    Some(BytesRange::from_start(bytes, true))
+                }
+            }
+            Operator::And => {
+                // instead of return none when failed to extract time range from left/right, we unwrap the none into
+                // `TimestampRange::min_to_max`.
+                let left = self
+                    .extract_bytes_range_from_expr(left)
+                    .unwrap_or_else(BytesRange::min_to_max);
+                let right = self
+                    .extract_bytes_range_from_expr(right)
+                    .unwrap_or_else(BytesRange::min_to_max);
+                Some(left.and(&right))
+            }
+            Operator::Or => {
+                let left = self.extract_bytes_range_from_expr(left)?;
+                let right = self.extract_bytes_range_from_expr(right)?;
+                Some(left.or(&right))
+            }
+            Operator::NotEq
+            | Operator::Plus
+            | Operator::Minus
+            | Operator::Multiply
+            | Operator::Divide
+            | Operator::Modulo
+            | Operator::IsDistinctFrom
+            | Operator::IsNotDistinctFrom
+            | Operator::RegexMatch
+            | Operator::RegexIMatch
+            | Operator::RegexNotMatch
+            | Operator::RegexNotIMatch
+            | Operator::BitwiseAnd
+            | Operator::BitwiseOr
+            | Operator::BitwiseXor
+            | Operator::BitwiseShiftRight
+            | Operator::BitwiseShiftLeft
+            | Operator::StringConcat => None,
+        }
+    }
+
+    fn get_bytes_filter(&self, left: &DfExpr, right: &DfExpr) -> Option<(Vec<u8>, bool)> {
+        let (col, lit, reverse) = match (left, right) {
+            (DfExpr::Column(column), DfExpr::Literal(scalar)) => (column, scalar, false),
+            (DfExpr::Literal(scalar), DfExpr::Column(column)) => (column, scalar, true),
+            _ => {
+                return None;
+            }
+        };
+        if col.name != self.col_name {
+            return None;
+        }
+        scalar_value_to_bytes(lit).map(|t| (t, reverse))
+    }
+
+    fn extract_from_between_expr(
+        &self,
+        expr: &DfExpr,
+        negated: &bool,
+        low: &DfExpr,
+        high: &DfExpr,
+    ) -> Option<BytesRange> {
+        let DfExpr::Column(col) = expr else {
+            return None;
+        };
+        if col.name != self.col_name {
+            return None;
+        }
+
+        if *negated {
+            return None;
+        }
+
+        match (low, high) {
+            (DfExpr::Literal(low), DfExpr::Literal(high)) => {
+                let low_opt = scalar_value_to_bytes(low);
+                let high_opt = scalar_value_to_bytes(high);
+                Some(BytesRange::new_inclusive(low_opt, high_opt))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract time range filter from `IN (...)` expr.
+    fn extract_from_in_list_expr(
+        &self,
+        expr: &DfExpr,
+        negated: bool,
+        list: &[DfExpr],
+    ) -> Option<BytesRange> {
+        if negated {
+            return None;
+        }
+        let DfExpr::Column(col) = expr else {
+            return None;
+        };
+        if col.name != self.col_name {
+            return None;
+        }
+
+        if list.is_empty() {
+            return Some(BytesRange::empty());
+        }
+        let mut init_range = BytesRange::empty();
+        for expr in list {
+            if let DfExpr::Literal(scalar) = expr {
+                if let Some(timestamp) = scalar_value_to_bytes(scalar) {
+                    init_range = init_range.or(&BytesRange::single(timestamp))
+                } else {
+                    // TODO(hl): maybe we should raise an error here since cannot parse
+                    // timestamp value from in list expr
+                    return None;
+                }
+            }
+        }
+        Some(init_range)
+    }
+}
+
+pub fn scalar_value_to_bytes(scalar: &ScalarValue) -> Option<Vec<u8>> {
+    match scalar {
+        ScalarValue::Utf8(Some(s)) => Some(s.as_bytes().to_vec()),
+        ScalarValue::Binary(bytes) => bytes.clone(),
+        ScalarValue::FixedSizeBinary(_, bytes) => bytes.clone(),
+        ScalarValue::LargeBinary(bytes) => bytes.clone(),
+        _ => None,
     }
 }
 

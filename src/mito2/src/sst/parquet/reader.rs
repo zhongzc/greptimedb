@@ -21,11 +21,13 @@ use std::sync::Arc;
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use bytes::Bytes;
-use common_time::range::TimestampRange;
+use common_telemetry::info;
+use common_time::range::{BytesRange, TimestampRange};
 use datatypes::arrow::record_batch::RecordBatch;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, TryStreamExt};
+use object_store::util::join_path;
 use object_store::ObjectStore;
 use parquet::arrow::async_reader::AsyncFileReader;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
@@ -47,6 +49,7 @@ use crate::sst::file::{FileHandle, FileId};
 use crate::sst::parquet::format::ReadFormat;
 use crate::sst::parquet::stats::RowGroupPruningStats;
 use crate::sst::parquet::{DEFAULT_READ_BATCH_SIZE, PARQUET_METADATA_KEY};
+use crate::worker::handle_build_index::ColumnIndexReaderBuilder;
 
 /// Parquet SST reader builder.
 pub struct ParquetReaderBuilder {
@@ -58,6 +61,8 @@ pub struct ParquetReaderBuilder {
     predicate: Option<Predicate>,
     /// Time range to filter.
     time_range: Option<TimestampRange>,
+    /// Primary key range predicates.
+    pk_range_predicates: Vec<(String, BytesRange)>,
     /// Metadata of columns to read.
     ///
     /// `None` reads all columns. Due to schema change, the projection
@@ -82,12 +87,22 @@ impl ParquetReaderBuilder {
             time_range: None,
             projection: None,
             cache_manager: None,
+            pk_range_predicates: Vec::new(),
         }
     }
 
     /// Attaches the predicate to the builder.
     pub fn predicate(mut self, predicate: Option<Predicate>) -> ParquetReaderBuilder {
         self.predicate = predicate;
+        self
+    }
+
+    /// Attaches the primary key range predicates to the builder.
+    pub fn pk_range_predicates(
+        mut self,
+        pk_range_predicates: Vec<(String, BytesRange)>,
+    ) -> ParquetReaderBuilder {
+        self.pk_range_predicates = pk_range_predicates;
         self
     }
 
@@ -181,6 +196,51 @@ impl ParquetReaderBuilder {
             }
         );
 
+        let mut row_groups = roaring::RoaringBitmap::full();
+        let index_file_path = join_path(
+            &self.file_dir,
+            &format!("{}.index", self.file_handle.file_id()),
+        );
+        if self
+            .object_store
+            .blocking()
+            .is_exist(&index_file_path)
+            .expect("Failed to check index file existence")
+        {
+            info!("Found index file {}", index_file_path);
+            let reader = self
+                .object_store
+                .blocking()
+                .reader(&index_file_path)
+                .expect("Failed to read index file");
+            let mut index_reader = ColumnIndexReaderBuilder::new(reader).build();
+
+            for (column_name, range) in &self.pk_range_predicates {
+                let Some(mut index) = index_reader.read_column_index(column_name) else {
+                    continue;
+                };
+
+                let start = range.start().as_ref().map(|s| s.as_slice());
+                let end = range.end().as_ref().map(|e| e.as_slice());
+
+                let bm = match (start, end) {
+                    (Some(s), Some(e)) => index.union(s..e),
+                    (Some(s), None) => index.union(s..),
+                    (None, Some(e)) => index.union(..e),
+                    (None, None) => index.union(..),
+                };
+
+                row_groups &= &bm;
+                info!(
+                    "Apply range {:?} to column index {}, got row groups {}, total row groups {}",
+                    range,
+                    column_name,
+                    bm.len(),
+                    row_groups.len()
+                );
+            }
+        }
+
         // Prune row groups by metadata.
         if let Some(predicate) = &self.predicate {
             let stats = RowGroupPruningStats::new(
@@ -192,7 +252,10 @@ impl ParquetReaderBuilder {
                 .prune_with_stats(&stats)
                 .into_iter()
                 .enumerate()
-                .filter_map(|(idx, valid)| if valid { Some(idx) } else { None })
+                .filter_map(|(idx, valid)| {
+                    let valid = valid && row_groups.contains(idx as u32);
+                    valid.then_some(idx)
+                })
                 .collect::<Vec<_>>();
             builder = builder.with_row_groups(pruned_row_groups);
         }

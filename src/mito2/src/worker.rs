@@ -15,7 +15,7 @@
 //! Structs and utilities for writing regions.
 
 mod handle_alter;
-mod handle_build_index;
+pub mod handle_build_index;
 mod handle_close;
 mod handle_compaction;
 mod handle_create;

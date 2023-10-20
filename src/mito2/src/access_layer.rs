@@ -108,24 +108,24 @@ impl AccessLayer {
         }
     }
 
-    pub(crate) fn new_index_reader(&self, file_id: &FileId) -> Option<BlockingReader> {
-        let file_path = join_path(&self.region_dir, &format!("{}.index", file_id));
-        if self
-            .object_store
-            .blocking()
-            .is_exist(&file_path)
-            .expect("Failed to check index file existence")
-        {
-            Some(
-                self.object_store
-                    .blocking()
-                    .reader(&file_path)
-                    .expect("Failed to create index writer"),
-            )
-        } else {
-            None
-        }
-    }
+    // pub(crate) fn new_index_reader(&self, file_id: &FileId) -> Option<BlockingReader> {
+    //     let file_path = join_path(&self.region_dir, &format!("{}.index", file_id));
+    //     if self
+    //         .object_store
+    //         .blocking()
+    //         .is_exist(&file_path)
+    //         .expect("Failed to check index file existence")
+    //     {
+    //         Some(
+    //             self.object_store
+    //                 .blocking()
+    //                 .reader(&file_path)
+    //                 .expect("Failed to create index writer"),
+    //         )
+    //     } else {
+    //         None
+    //     }
+    // }
 
     /// Returns a new parquet writer to write the SST for specific `file_id`.
     // TODO(hl): maybe rename to [sst_writer].

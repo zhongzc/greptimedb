@@ -376,16 +376,16 @@ fn merge_column_index_builders(
     column_index_builders
 }
 
-struct ColumnIndexReaderBuilder {
+pub struct ColumnIndexReaderBuilder {
     reader: BlockingReader,
 }
 
 impl ColumnIndexReaderBuilder {
-    fn new(reader: BlockingReader) -> Self {
+    pub fn new(reader: BlockingReader) -> Self {
         Self { reader }
     }
 
-    fn build(mut self) -> ColumnIndexReader {
+    pub fn build(mut self) -> ColumnIndexReader {
         let column_indices = self.read_column_indices();
         ColumnIndexReader::new(self.reader, column_indices)
     }
@@ -426,7 +426,7 @@ impl ColumnIndexReaderBuilder {
     }
 }
 
-struct ColumnIndexReader {
+pub struct ColumnIndexReader {
     reader: BlockingReader,
     column_indices_offsets: HashMap<String, (u64, u64)>,
 }
@@ -439,11 +439,10 @@ impl ColumnIndexReader {
         }
     }
 
-    fn read_column_index(&mut self, column_name: &str) -> InvertedValuesReader<'_> {
-        let (offset_begin, offset_end) = self
-            .column_indices_offsets
-            .get(column_name)
-            .expect("Failed to get column index offset");
+    pub fn read_column_index(&mut self, column_name: &str) -> Option<InvertedValuesReader<'_>> {
+        let Some((offset_begin, offset_end)) = self.column_indices_offsets.get(column_name) else {
+            return None;
+        };
         self.reader
             .seek(SeekFrom::Start(offset_end - 8))
             .expect("Failed to seek");
@@ -465,22 +464,25 @@ impl ColumnIndexReader {
 
         let fst = fst::Map::new(fst_bytes).expect("Failed to get fst");
 
-        InvertedValuesReader {
+        Some(InvertedValuesReader {
             reader: &mut self.reader,
             offset_begin: *offset_begin,
             fst,
-        }
+        })
     }
 }
 
-struct InvertedValuesReader<'a> {
+pub struct InvertedValuesReader<'a> {
     reader: &'a mut BlockingReader,
     offset_begin: u64,
     fst: fst::Map<Vec<u8>>,
 }
 
 impl<'a> InvertedValuesReader<'a> {
-    fn union<'b>(&mut self, bound: impl RangeBounds<&'b [u8]>) -> roaring::bitmap::RoaringBitmap {
+    pub fn union<'b>(
+        &mut self,
+        bound: impl RangeBounds<&'b [u8]>,
+    ) -> roaring::bitmap::RoaringBitmap {
         let mut bitmap = roaring::RoaringBitmap::new();
 
         let fst_range = self.fst.range();

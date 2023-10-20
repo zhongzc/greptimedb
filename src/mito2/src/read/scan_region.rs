@@ -14,12 +14,14 @@
 
 //! Scans a region according to the scan request.
 
+use std::collections::HashMap;
+
 use common_recordbatch::SendableRecordBatchStream;
 use common_telemetry::debug;
 use common_time::range::TimestampRange;
 use snafu::ResultExt;
 use store_api::storage::ScanRequest;
-use table::predicate::{Predicate, TimeRangePredicateBuilder};
+use table::predicate::{BytesRangePredicateBuilder, Predicate, TimeRangePredicateBuilder};
 
 use crate::access_layer::AccessLayerRef;
 use crate::cache::CacheManagerRef;
@@ -183,9 +185,25 @@ impl ScanRegion {
             None => ProjectionMapper::all(&self.version.metadata)?,
         };
 
+        let mut pk_range_predicates = Vec::new();
+        for pk_column in self
+            .version
+            .metadata
+            .primary_key_columns()
+            .skip(1) // ignore first
+            .map(|c| c.column_schema.name.clone())
+        {
+            let range = BytesRangePredicateBuilder::new(&pk_column, &self.request.filters).build();
+            if range.is_full() {
+                continue;
+            }
+            pk_range_predicates.push((pk_column, range));
+        }
+
         let seq_scan = SeqScan::new(self.access_layer.clone(), mapper)
             .with_time_range(Some(time_range))
             .with_predicate(Some(predicate))
+            .with_pk_range_predicates(pk_range_predicates)
             .with_memtables(memtables)
             .with_files(files)
             .with_cache(self.cache_manager);

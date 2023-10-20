@@ -33,33 +33,33 @@ pub struct GenericRange<T> {
 
 impl<T> GenericRange<T>
 where
-    T: Copy + PartialOrd + Default,
+    T: Clone + PartialOrd + Default,
 {
     /// Computes the AND'ed range with other.  
     pub fn and(&self, other: &GenericRange<T>) -> GenericRange<T> {
         let start = match (self.start(), other.start()) {
             (Some(l), Some(r)) => {
                 if l > r {
-                    Some(*l)
+                    Some(l.clone())
                 } else {
-                    Some(*r)
+                    Some(r.clone())
                 }
             }
-            (Some(l), None) => Some(*l),
-            (None, Some(r)) => Some(*r),
+            (Some(l), None) => Some(l.clone()),
+            (None, Some(r)) => Some(r.clone()),
             (None, None) => None,
         };
 
         let end = match (self.end(), other.end()) {
             (Some(l), Some(r)) => {
                 if l > r {
-                    Some(*r)
+                    Some(r.clone())
                 } else {
-                    Some(*l)
+                    Some(l.clone())
                 }
             }
-            (Some(l), None) => Some(*l),
-            (None, Some(r)) => Some(*r),
+            (Some(l), None) => Some(l.clone()),
+            (None, Some(r)) => Some(r.clone()),
             (None, None) => None,
         };
 
@@ -72,18 +72,18 @@ where
     /// instead of `[1, 2) ∪ [4, 5)`
     pub fn or(&self, other: &GenericRange<T>) -> GenericRange<T> {
         if self.is_empty() {
-            return *other;
+            return other.clone();
         }
 
         if other.is_empty() {
-            return *self;
+            return self.clone();
         }
         let start = match (self.start(), other.start()) {
             (Some(l), Some(r)) => {
                 if l > r {
-                    Some(*r)
+                    Some(r.clone())
                 } else {
-                    Some(*l)
+                    Some(l.clone())
                 }
             }
             (Some(_), None) => None,
@@ -94,9 +94,9 @@ where
         let end = match (self.end(), other.end()) {
             (Some(l), Some(r)) => {
                 if l > r {
-                    Some(*l)
+                    Some(l.clone())
                 } else {
-                    Some(*r)
+                    Some(r.clone())
                 }
             }
             (Some(_), None) => None,
@@ -182,6 +182,10 @@ impl<T> GenericRange<T> {
             (None, None) => true,
         }
     }
+
+    pub fn is_full(&self) -> bool {
+        self.start.is_none() && self.end.is_none()
+    }
 }
 
 impl<T: PartialOrd> GenericRange<T> {
@@ -192,6 +196,56 @@ impl<T: PartialOrd> GenericRange<T> {
             (Some(start), Some(end)) => start == end,
             _ => false,
         }
+    }
+}
+
+pub type BytesRange = GenericRange<Vec<u8>>;
+
+impl BytesRange {
+    pub fn single(bytes: Vec<u8>) -> Self {
+        let start = Some(bytes.clone());
+        let end = Some(Self::add_one(bytes));
+        BytesRange::from_optional(start, end)
+    }
+
+    pub fn from_start(bytes: Vec<u8>, inclusive: bool) -> Self {
+        let start = if inclusive {
+            Some(bytes.clone())
+        } else {
+            Some(Self::add_one(bytes))
+        };
+        let end = None;
+        BytesRange::from_optional(start, end)
+    }
+
+    pub fn until_end(bytes: Vec<u8>, inclusive: bool) -> Self {
+        let end = if inclusive {
+            Some(Self::add_one(bytes))
+        } else {
+            Some(bytes)
+        };
+        Self { start: None, end }
+    }
+
+    pub fn new_inclusive(start: Option<Vec<u8>>, end: Option<Vec<u8>>) -> Self {
+        // check for emptiness
+        if let (Some(start_bytes), Some(end_bytes)) = (&start, &end) {
+            if start_bytes > end_bytes {
+                return Self::empty();
+            }
+        }
+
+        let end = if let Some(end) = end {
+            Some(Self::add_one(end))
+        } else {
+            None
+        };
+        Self::from_optional(start, end)
+    }
+
+    fn add_one(mut bytes: Vec<u8>) -> Vec<u8> {
+        bytes.push(0);
+        bytes
     }
 }
 
