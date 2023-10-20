@@ -89,7 +89,6 @@ impl AccessLayer {
         Arc::new(file_reader)
     }
 
-    //
     pub(crate) fn new_index_writer(&self, file_id: &FileId) -> Option<BlockingWriter> {
         let file_path = join_path(&self.region_dir, &format!("{}.index", file_id));
         if self
@@ -106,6 +105,25 @@ impl AccessLayer {
                     .writer(&file_path)
                     .expect("Failed to create index writer"),
             )
+        }
+    }
+
+    pub(crate) fn new_index_reader(&self, file_id: &FileId) -> Option<BlockingReader> {
+        let file_path = join_path(&self.region_dir, &format!("{}.index", file_id));
+        if self
+            .object_store
+            .blocking()
+            .is_exist(&file_path)
+            .expect("Failed to check index file existence")
+        {
+            Some(
+                self.object_store
+                    .blocking()
+                    .reader(&file_path)
+                    .expect("Failed to create index writer"),
+            )
+        } else {
+            None
         }
     }
 
