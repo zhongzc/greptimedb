@@ -210,25 +210,32 @@ impl ParquetReaderBuilder {
             info!("Found index file {}", index_file_path);
             let reader = self
                 .object_store
-                .blocking()
                 .reader(&index_file_path)
+                .await
                 .expect("Failed to read index file");
-            let mut index_reader = ColumnIndexReaderBuilder::new(reader).build();
+            let (index_reader, reader) = ColumnIndexReaderBuilder::new().build(reader).await;
 
+            let mut reader_box = Some(reader);
             for (column_name, range) in &self.pk_range_predicates {
-                let Some(mut index) = index_reader.read_column_index(column_name) else {
+                let (index, reader) = index_reader
+                    .read_column_index(column_name, reader_box.take().unwrap())
+                    .await;
+
+                let Some(index) = index else {
+                    reader_box = Some(reader);
                     continue;
                 };
 
                 let start = range.start().as_ref().map(|s| s.as_slice());
                 let end = range.end().as_ref().map(|e| e.as_slice());
 
-                let bm = match (start, end) {
-                    (Some(s), Some(e)) => index.union(s..e),
-                    (Some(s), None) => index.union(s..),
-                    (None, Some(e)) => index.union(..e),
-                    (None, None) => index.union(..),
+                let (bm, reader) = match (start, end) {
+                    (Some(s), Some(e)) => index.union(s..e, reader).await,
+                    (Some(s), None) => index.union(s.., reader).await,
+                    (None, Some(e)) => index.union(..e, reader).await,
+                    (None, None) => index.union(.., reader).await,
                 };
+                reader_box = Some(reader);
 
                 row_groups &= &bm;
                 info!(

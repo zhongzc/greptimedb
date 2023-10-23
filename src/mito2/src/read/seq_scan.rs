@@ -14,7 +14,6 @@
 
 //! Sequential scan.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_stream::try_stream;

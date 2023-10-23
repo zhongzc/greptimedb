@@ -13,36 +13,28 @@
 // limitations under the License.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{Read, Seek, SeekFrom};
-use std::ops::{Bound, Range, RangeBounds, RangeFrom};
+use std::io::SeekFrom;
+use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 
 use common_query::Output;
-use common_telemetry::{debug, error, info, warn};
+use common_telemetry::info;
 use datatypes::value::Value;
 use fst::{IntoStreamer, Streamer};
-use object_store::{BlockingReader, BlockingWriter};
-use parquet::column::reader::get_typed_column_reader;
+use object_store::{BlockingWriter, Reader};
 use parquet::file::reader::FileReader;
-use parquet::file::serialized_reader::{SerializedFileReader, SerializedRowGroupReader};
 use parquet::record::Field;
 use parquet::schema::types::GroupTypeBuilder;
-use snafu::ResultExt;
-use store_api::metadata::{RegionMetadata, RegionMetadataBuilder, RegionMetadataRef};
-use store_api::region_request::RegionAlterRequest;
 use store_api::storage::consts::PRIMARY_KEY_COLUMN_NAME;
 use store_api::storage::RegionId;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::SyncIoBridge;
 
-use crate::error::{InvalidMetadataSnafu, InvalidRegionRequestSnafu, Result};
-use crate::flush::FlushReason;
-use crate::manifest::action::{RegionChange, RegionMetaAction, RegionMetaActionList};
-use crate::memtable::MemtableBuilderRef;
-use crate::region::version::Version;
+use crate::error::Result;
 use crate::region::MitoRegionRef;
-use crate::request::{DdlRequest, OptionOutputTx, SenderDdlRequest};
+use crate::request::OptionOutputTx;
 use crate::row_converter::{McmpRowCodec, RowCodec, SortField};
 use crate::sst::file::FileId;
-use crate::sst::parquet::reader::ParquetReader;
 use crate::worker::RegionWorkerLoop;
 
 impl<S> RegionWorkerLoop<S> {
@@ -376,35 +368,39 @@ fn merge_column_index_builders(
     column_index_builders
 }
 
-pub struct ColumnIndexReaderBuilder {
-    reader: BlockingReader,
-}
+pub struct ColumnIndexReaderBuilder {}
 
 impl ColumnIndexReaderBuilder {
-    pub fn new(reader: BlockingReader) -> Self {
-        Self { reader }
+    pub fn new() -> Self {
+        Self {}
     }
 
-    pub fn build(mut self) -> ColumnIndexReader {
-        let column_indices = self.read_column_indices();
-        ColumnIndexReader::new(self.reader, column_indices)
+    pub async fn build(self, mut reader: Reader) -> (ColumnIndexReader, Reader) {
+        let column_indices = self.read_column_indices(&mut reader).await;
+        (ColumnIndexReader::new(column_indices), reader)
     }
 
-    fn read_column_indices(&mut self) -> HashMap<String, (u64, u64)> {
-        let offset_of_indexes_end = self.reader.seek(SeekFrom::End(-8)).expect("Failed to seek");
+    async fn read_column_indices(&self, reader: &mut Reader) -> HashMap<String, (u64, u64)> {
+        let offset_of_indexes_end = reader
+            .seek(SeekFrom::End(-8))
+            .await
+            .expect("Failed to seek");
         let mut offset_of_indexes_bytes = [0; 8];
-        self.reader
+        reader
             .read_exact(&mut offset_of_indexes_bytes)
+            .await
             .expect("Failed to read offset of indexes");
         let offset_of_indexes = u64::from_le_bytes(offset_of_indexes_bytes);
-        self.reader
+        reader
             .seek(SeekFrom::Start(offset_of_indexes))
+            .await
             .expect("Failed to seek");
 
         let mut column_indexes_json_bytes =
             vec![0u8; (offset_of_indexes_end - offset_of_indexes) as usize];
-        self.reader
+        reader
             .read_exact(&mut column_indexes_json_bytes)
+            .await
             .expect("Failed to read column indexes json bytes");
         let js: HashMap<String, u64> = serde_json::from_slice(&column_indexes_json_bytes)
             .expect("Failed to deserialize column indexes json");
@@ -427,64 +423,72 @@ impl ColumnIndexReaderBuilder {
 }
 
 pub struct ColumnIndexReader {
-    reader: BlockingReader,
     column_indices_offsets: HashMap<String, (u64, u64)>,
 }
 
 impl ColumnIndexReader {
-    fn new(reader: BlockingReader, column_indices_offsets: HashMap<String, (u64, u64)>) -> Self {
+    fn new(column_indices_offsets: HashMap<String, (u64, u64)>) -> Self {
         Self {
-            reader,
             column_indices_offsets,
         }
     }
 
-    pub fn read_column_index(&mut self, column_name: &str) -> Option<InvertedValuesReader<'_>> {
+    pub async fn read_column_index(
+        &self,
+        column_name: &str,
+        mut reader: Reader,
+    ) -> (Option<InvertedValuesReader>, Reader) {
         let Some((offset_begin, offset_end)) = self.column_indices_offsets.get(column_name) else {
-            return None;
+            return (None, reader);
         };
-        self.reader
+
+        reader
             .seek(SeekFrom::Start(offset_end - 8))
+            .await
             .expect("Failed to seek");
 
         let mut fst_size_bytes = [0; 8];
-        self.reader
+        reader
             .read_exact(&mut fst_size_bytes)
+            .await
             .expect("Failed to read offset of fst");
         let fst_size = u64::from_le_bytes(fst_size_bytes);
 
-        self.reader
+        reader
             .seek(SeekFrom::Start(offset_end - fst_size - 8))
+            .await
             .expect("Failed to seek");
 
         let mut fst_bytes = vec![0u8; fst_size as usize];
-        self.reader
+        reader
             .read_exact(&mut fst_bytes)
+            .await
             .expect("Failed to read fst bytes");
 
         let fst = fst::Map::new(fst_bytes).expect("Failed to get fst");
 
-        Some(InvertedValuesReader {
-            reader: &mut self.reader,
-            offset_begin: *offset_begin,
-            fst,
-        })
+        (
+            Some(InvertedValuesReader {
+                offset_begin: *offset_begin,
+                fst,
+            }),
+            reader,
+        )
     }
 }
 
-pub struct InvertedValuesReader<'a> {
-    reader: &'a mut BlockingReader,
+pub struct InvertedValuesReader {
     offset_begin: u64,
     fst: fst::Map<Vec<u8>>,
 }
 
-impl<'a> InvertedValuesReader<'a> {
-    pub fn union<'b>(
-        &mut self,
-        bound: impl RangeBounds<&'b [u8]>,
-    ) -> roaring::bitmap::RoaringBitmap {
+impl InvertedValuesReader {
+    pub async fn union(
+        &self,
+        bound: impl RangeBounds<&[u8]>,
+        mut reader: Reader,
+    ) -> (roaring::bitmap::RoaringBitmap, Reader) {
         let mut bitmap = roaring::RoaringBitmap::new();
-
         let fst_range = self.fst.range();
         let fst_range = match bound.start_bound() {
             Bound::Included(v) => fst_range.ge(v),
@@ -499,20 +503,28 @@ impl<'a> InvertedValuesReader<'a> {
 
         let mut bitmap_offsets = fst_range.into_stream();
         let Some((_, first_bitmap_offset)) = bitmap_offsets.next() else {
-            return bitmap;
+            return (bitmap, reader);
         };
 
-        self.reader
+        reader
             .seek(SeekFrom::Start(self.offset_begin + first_bitmap_offset))
+            .await
             .expect("Failed to seek");
-        bitmap |= roaring::RoaringBitmap::deserialize_from(&mut *self.reader)
-            .expect("Failed to deserialize");
 
+        let mut bitmap_count = 1;
         while let Some(_) = bitmap_offsets.next() {
-            bitmap |= roaring::RoaringBitmap::deserialize_from(&mut *self.reader)
-                .expect("Failed to deserialize");
+            bitmap_count += 1;
         }
+        tokio::task::spawn_blocking(move || {
+            let mut blocking_reader = SyncIoBridge::new(&mut reader);
+            for _ in 0..bitmap_count {
+                bitmap |= roaring::RoaringBitmap::deserialize_from(&mut blocking_reader)
+                    .expect("Failed to deserialize");
+            }
 
-        bitmap
+            (bitmap, reader)
+        })
+        .await
+        .expect("Failed to join blocking task")
     }
 }
