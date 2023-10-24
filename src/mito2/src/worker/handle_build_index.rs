@@ -14,12 +14,12 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::SeekFrom;
-use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 
 use common_query::Output;
 use common_telemetry::info;
 use datatypes::value::Value;
+use fst::map::OpBuilder;
 use fst::{IntoStreamer, Streamer};
 use object_store::{BlockingWriter, Reader};
 use parquet::file::reader::FileReader;
@@ -27,8 +27,8 @@ use parquet::record::Field;
 use parquet::schema::types::GroupTypeBuilder;
 use store_api::storage::consts::PRIMARY_KEY_COLUMN_NAME;
 use store_api::storage::RegionId;
+use table::predicate::BytesPredicate;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio_util::io::SyncIoBridge;
 
 use crate::error::Result;
 use crate::region::MitoRegionRef;
@@ -214,11 +214,14 @@ impl ColumnIndexBuilder {
         let mut bytes_to_write = 0;
         let mut fst_builder = fst::MapBuilder::memory();
         for (value, row_groups) in &self.value_to_row_groups {
+            let size = row_groups.serialized_size();
+
+            // encode offset as u32, size as u32, combine into u64
+            let offset_and_size = ((bytes_to_write as u64) << 32) | (size as u64);
             fst_builder
-                .insert(value, bytes_to_write as u64)
+                .insert(value, offset_and_size as u64)
                 .expect("Failed to insert value to fst");
 
-            let size = row_groups.serialized_size();
             row_groups
                 .serialize_into(&mut *writer)
                 .expect("Failed to serialize row groups");
@@ -368,37 +371,40 @@ fn merge_column_index_builders(
     column_index_builders
 }
 
-pub struct ColumnIndexReaderBuilder {}
+pub struct ColumnIndexReaderBuilder {
+    reader: Reader,
+}
 
 impl ColumnIndexReaderBuilder {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(reader: Reader) -> Self {
+        Self { reader }
     }
 
-    pub async fn build(self, mut reader: Reader) -> (ColumnIndexReader, Reader) {
-        let column_indices = self.read_column_indices(&mut reader).await;
-        (ColumnIndexReader::new(column_indices), reader)
+    pub async fn build(mut self) -> ColumnIndexReader {
+        let column_indices = self.read_column_indices().await;
+        ColumnIndexReader::new(self.reader, column_indices)
     }
 
-    async fn read_column_indices(&self, reader: &mut Reader) -> HashMap<String, (u64, u64)> {
-        let offset_of_indexes_end = reader
+    async fn read_column_indices(&mut self) -> HashMap<String, (u64, u64)> {
+        let offset_of_indexes_end = self
+            .reader
             .seek(SeekFrom::End(-8))
             .await
             .expect("Failed to seek");
         let mut offset_of_indexes_bytes = [0; 8];
-        reader
+        self.reader
             .read_exact(&mut offset_of_indexes_bytes)
             .await
             .expect("Failed to read offset of indexes");
         let offset_of_indexes = u64::from_le_bytes(offset_of_indexes_bytes);
-        reader
+        self.reader
             .seek(SeekFrom::Start(offset_of_indexes))
             .await
             .expect("Failed to seek");
 
         let mut column_indexes_json_bytes =
             vec![0u8; (offset_of_indexes_end - offset_of_indexes) as usize];
-        reader
+        self.reader
             .read_exact(&mut column_indexes_json_bytes)
             .await
             .expect("Failed to read column indexes json bytes");
@@ -423,108 +429,138 @@ impl ColumnIndexReaderBuilder {
 }
 
 pub struct ColumnIndexReader {
+    reader: Reader,
     column_indices_offsets: HashMap<String, (u64, u64)>,
 }
 
 impl ColumnIndexReader {
-    fn new(column_indices_offsets: HashMap<String, (u64, u64)>) -> Self {
+    fn new(reader: Reader, column_indices_offsets: HashMap<String, (u64, u64)>) -> Self {
         Self {
+            reader,
             column_indices_offsets,
         }
     }
 
     pub async fn read_column_index(
-        &self,
+        &mut self,
         column_name: &str,
-        mut reader: Reader,
-    ) -> (Option<InvertedValuesReader>, Reader) {
+    ) -> Option<InvertedValuesReader<'_>> {
         let Some((offset_begin, offset_end)) = self.column_indices_offsets.get(column_name) else {
-            return (None, reader);
+            return None;
         };
 
-        reader
+        self.reader
             .seek(SeekFrom::Start(offset_end - 8))
             .await
             .expect("Failed to seek");
 
         let mut fst_size_bytes = [0; 8];
-        reader
+        self.reader
             .read_exact(&mut fst_size_bytes)
             .await
             .expect("Failed to read offset of fst");
         let fst_size = u64::from_le_bytes(fst_size_bytes);
 
-        reader
+        self.reader
             .seek(SeekFrom::Start(offset_end - fst_size - 8))
             .await
             .expect("Failed to seek");
 
         let mut fst_bytes = vec![0u8; fst_size as usize];
-        reader
+        self.reader
             .read_exact(&mut fst_bytes)
             .await
             .expect("Failed to read fst bytes");
 
         let fst = fst::Map::new(fst_bytes).expect("Failed to get fst");
 
-        (
-            Some(InvertedValuesReader {
-                offset_begin: *offset_begin,
-                fst,
-            }),
-            reader,
-        )
+        Some(InvertedValuesReader {
+            reader: &mut self.reader,
+            offset_begin: *offset_begin,
+            fst,
+        })
     }
 }
 
-pub struct InvertedValuesReader {
+pub struct InvertedValuesReader<'a> {
+    reader: &'a mut Reader,
     offset_begin: u64,
     fst: fst::Map<Vec<u8>>,
 }
 
-impl InvertedValuesReader {
-    pub async fn union(
-        &self,
-        bound: impl RangeBounds<&[u8]>,
-        mut reader: Reader,
-    ) -> (roaring::bitmap::RoaringBitmap, Reader) {
-        let mut bitmap = roaring::RoaringBitmap::new();
-        let fst_range = self.fst.range();
-        let fst_range = match bound.start_bound() {
-            Bound::Included(v) => fst_range.ge(v),
-            Bound::Excluded(v) => fst_range.gt(v),
-            Bound::Unbounded => fst_range,
-        };
-        let fst_range = match bound.end_bound() {
-            Bound::Included(v) => fst_range.le(v),
-            Bound::Excluded(v) => fst_range.lt(v),
-            Bound::Unbounded => fst_range,
-        };
+impl<'a> InvertedValuesReader<'a> {
+    pub fn apply_predicates_to_offsets(&mut self, predicates: &[BytesPredicate]) -> Vec<u64> {
+        let mut op = OpBuilder::new();
+        for predicate in predicates {
+            match predicate {
+                BytesPredicate::Eq(bytes) => {
+                    return match self.fst.get(bytes) {
+                        Some(offset_size) => vec![offset_size],
+                        None => vec![],
+                    };
+                }
 
-        let mut bitmap_offsets = fst_range.into_stream();
-        let Some((_, first_bitmap_offset)) = bitmap_offsets.next() else {
-            return (bitmap, reader);
-        };
+                BytesPredicate::InList(bytes) => {
+                    let mut bitmap_offset_sizes = vec![];
+                    for bytes in bytes {
+                        if let Some(offset_size) = self.fst.get(bytes) {
+                            bitmap_offset_sizes.push(offset_size);
+                        }
+                    }
+                    return bitmap_offset_sizes;
+                }
 
-        reader
-            .seek(SeekFrom::Start(self.offset_begin + first_bitmap_offset))
-            .await
-            .expect("Failed to seek");
-
-        let mut bitmap_count = 1;
-        while let Some(_) = bitmap_offsets.next() {
-            bitmap_count += 1;
-        }
-        tokio::task::spawn_blocking(move || {
-            let mut blocking_reader = SyncIoBridge::new(&mut reader);
-            for _ in 0..bitmap_count {
-                bitmap |= roaring::RoaringBitmap::deserialize_from(&mut blocking_reader)
-                    .expect("Failed to deserialize");
+                BytesPredicate::Gt(bytes) => {
+                    op.push(self.fst.range().gt(bytes.as_slice()));
+                }
+                BytesPredicate::GtEq(bytes) => {
+                    op.push(self.fst.range().ge(bytes.as_slice()));
+                }
+                BytesPredicate::Lt(bytes) => {
+                    op.push(self.fst.range().lt(bytes.as_slice()));
+                }
+                BytesPredicate::LtEq(bytes) => {
+                    op.push(self.fst.range().le(bytes.as_slice()));
+                }
+                BytesPredicate::InRangeInclusive(left, right) => {
+                    op.push(self.fst.range().le(right.as_slice()).ge(left.as_slice()));
+                }
+                _ => {}
             }
+        }
 
-            (bitmap, reader)
-        })
-        .await
-        .expect("Failed to join blocking task")
+        let mut intersection = op.intersection().into_stream();
+        let mut bitmap_offset_sizes = vec![];
+        while let Some((_, indexed_values)) = intersection.next() {
+            bitmap_offset_sizes.push(indexed_values[0].value);
+        }
+
+        bitmap_offset_sizes
+    }
+
+    pub async fn apply(&mut self, predicates: &[BytesPredicate]) -> roaring::bitmap::RoaringBitmap {
+        if predicates.is_empty() {
+            return roaring::RoaringBitmap::full();
+        }
+        let bitmap_offset_sizes = self.apply_predicates_to_offsets(predicates);
+        let mut bitmap = roaring::RoaringBitmap::new();
+        for bitmap_offset_size in bitmap_offset_sizes {
+            let offset = (bitmap_offset_size >> 32) as u64;
+            let size = (bitmap_offset_size & 0xffffffff) as usize;
+            self.reader
+                .seek(SeekFrom::Start(self.offset_begin + offset))
+                .await
+                .expect("Failed to seek");
+            let mut bitmap_bytes = vec![0u8; size];
+            self.reader
+                .read_exact(&mut bitmap_bytes)
+                .await
+                .expect("Failed to read bitmap bytes");
+
+            bitmap |= roaring::RoaringBitmap::deserialize_from(&mut bitmap_bytes.as_slice())
+                .expect("Failed to deserialize");
+        }
+
+        bitmap
     }
 }

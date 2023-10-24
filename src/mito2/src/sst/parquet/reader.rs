@@ -22,7 +22,7 @@ use async_compat::CompatExt;
 use async_trait::async_trait;
 use bytes::Bytes;
 use common_telemetry::info;
-use common_time::range::{BytesRange, TimestampRange};
+use common_time::range::TimestampRange;
 use datatypes::arrow::record_batch::RecordBatch;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
@@ -37,7 +37,7 @@ use parquet::format::KeyValue;
 use snafu::{ensure, OptionExt, ResultExt};
 use store_api::metadata::{RegionMetadata, RegionMetadataRef};
 use store_api::storage::{ColumnId, RegionId};
-use table::predicate::Predicate;
+use table::predicate::{BytesPredicate, Predicate};
 use tokio::io::BufReader;
 
 use crate::cache::CacheManagerRef;
@@ -61,8 +61,8 @@ pub struct ParquetReaderBuilder {
     predicate: Option<Predicate>,
     /// Time range to filter.
     time_range: Option<TimestampRange>,
-    /// Primary key range predicates.
-    pk_range_predicates: Vec<(String, BytesRange)>,
+    /// Primary key bytes predicates.
+    pk_bytes_predicates: Vec<(String, Vec<BytesPredicate>)>,
     /// Metadata of columns to read.
     ///
     /// `None` reads all columns. Due to schema change, the projection
@@ -87,7 +87,7 @@ impl ParquetReaderBuilder {
             time_range: None,
             projection: None,
             cache_manager: None,
-            pk_range_predicates: Vec::new(),
+            pk_bytes_predicates: Vec::new(),
         }
     }
 
@@ -98,11 +98,11 @@ impl ParquetReaderBuilder {
     }
 
     /// Attaches the primary key range predicates to the builder.
-    pub fn pk_range_predicates(
+    pub fn pk_bytes_predicates(
         mut self,
-        pk_range_predicates: Vec<(String, BytesRange)>,
+        pk_bytes_predicates: Vec<(String, Vec<BytesPredicate>)>,
     ) -> ParquetReaderBuilder {
-        self.pk_range_predicates = pk_range_predicates;
+        self.pk_bytes_predicates = pk_bytes_predicates;
         self
     }
 
@@ -196,15 +196,16 @@ impl ParquetReaderBuilder {
             }
         );
 
-        let mut row_groups = roaring::RoaringBitmap::full();
+        let mut row_groups =
+            roaring::RoaringBitmap::from_iter(0..builder.metadata().row_groups().len() as u32);
         let index_file_path = join_path(
             &self.file_dir,
             &format!("{}.index", self.file_handle.file_id()),
         );
         if self
             .object_store
-            .blocking()
             .is_exist(&index_file_path)
+            .await
             .expect("Failed to check index file existence")
         {
             info!("Found index file {}", index_file_path);
@@ -213,34 +214,20 @@ impl ParquetReaderBuilder {
                 .reader(&index_file_path)
                 .await
                 .expect("Failed to read index file");
-            let (index_reader, reader) = ColumnIndexReaderBuilder::new().build(reader).await;
+            let mut index_reader = ColumnIndexReaderBuilder::new(reader).build().await;
 
-            let mut reader_box = Some(reader);
-            for (column_name, range) in &self.pk_range_predicates {
-                let (index, reader) = index_reader
-                    .read_column_index(column_name, reader_box.take().unwrap())
-                    .await;
-
-                let Some(index) = index else {
-                    reader_box = Some(reader);
+            for (column_name, predicates) in &self.pk_bytes_predicates {
+                info!("Appling predicates {:?} to column index {}", predicates, column_name);
+                let index = index_reader.read_column_index(column_name).await;
+                let Some(mut index) = index else {
                     continue;
                 };
 
-                let start = range.start().as_ref().map(|s| s.as_slice());
-                let end = range.end().as_ref().map(|e| e.as_slice());
-
-                let (bm, reader) = match (start, end) {
-                    (Some(s), Some(e)) => index.union(s..e, reader).await,
-                    (Some(s), None) => index.union(s.., reader).await,
-                    (None, Some(e)) => index.union(..e, reader).await,
-                    (None, None) => index.union(.., reader).await,
-                };
-                reader_box = Some(reader);
-
+                let bm = index.apply(predicates).await;
                 row_groups &= &bm;
                 info!(
-                    "Apply range {:?} to column index {}, got row groups {}, total row groups {}",
-                    range,
+                    "Apply predicates {:?} to column index {}, got row groups {}, total row groups {}",
+                    predicates,
                     column_name,
                     bm.len(),
                     row_groups.len()

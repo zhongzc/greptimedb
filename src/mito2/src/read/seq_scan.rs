@@ -20,9 +20,9 @@ use async_stream::try_stream;
 use common_error::ext::BoxedError;
 use common_recordbatch::error::ExternalSnafu;
 use common_recordbatch::{RecordBatchStreamAdaptor, SendableRecordBatchStream};
-use common_time::range::{BytesRange, TimestampRange};
+use common_time::range::TimestampRange;
 use snafu::ResultExt;
-use table::predicate::Predicate;
+use table::predicate::{BytesPredicate, Predicate};
 
 use crate::access_layer::AccessLayerRef;
 use crate::cache::CacheManagerRef;
@@ -46,8 +46,8 @@ pub struct SeqScan {
     time_range: Option<TimestampRange>,
     /// Predicate to push down.
     predicate: Option<Predicate>,
-    /// Primary key range predicates.
-    pk_range_predicates: Vec<(String, BytesRange)>,
+    /// Primary key bytes predicates.
+    pk_bytes_predicates: Vec<(String, Vec<BytesPredicate>)>,
     /// Memtables to scan.
     memtables: Vec<MemtableRef>,
     /// Handles to SST files to scan.
@@ -65,7 +65,7 @@ impl SeqScan {
             mapper: Arc::new(mapper),
             time_range: None,
             predicate: None,
-            pk_range_predicates: Vec::new(),
+            pk_bytes_predicates: Vec::new(),
             memtables: Vec::new(),
             files: Vec::new(),
             cache_manager: None,
@@ -86,13 +86,13 @@ impl SeqScan {
         self
     }
 
-    /// Sets primary key range predicates.
+    /// Sets primary key bytes predicates.
     #[must_use]
-    pub(crate) fn with_pk_range_predicates(
+    pub(crate) fn with_pk_bytes_predicates(
         mut self,
-        pk_range_predicates: Vec<(String, BytesRange)>,
+        pk_bytes_predicates: Vec<(String, Vec<BytesPredicate>)>,
     ) -> Self {
-        self.pk_range_predicates = pk_range_predicates;
+        self.pk_bytes_predicates = pk_bytes_predicates;
         self
     }
 
@@ -157,7 +157,7 @@ impl SeqScan {
                 .read_sst(file.clone())
                 .predicate(self.predicate.clone())
                 .time_range(self.time_range)
-                .pk_range_predicates(self.pk_range_predicates.clone())
+                .pk_bytes_predicates(self.pk_bytes_predicates.clone())
                 .projection(Some(self.mapper.column_ids().to_vec()))
                 .cache(self.cache_manager.clone())
                 .build()

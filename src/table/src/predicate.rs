@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use common_query::logical_plan::{DfExpr, Expr};
 use common_telemetry::{debug, error, warn};
-use common_time::range::{BytesRange, GenericRange, TimestampRange};
+use common_time::range::TimestampRange;
 use common_time::timestamp::TimeUnit;
 use common_time::Timestamp;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -414,31 +414,35 @@ impl<'a> TimeRangePredicateBuilder<'a> {
     }
 }
 
-/// `BytesRangePredicateBuilder` extracts time range from logical exprs to facilitate fast
-/// time range pruning.
-pub struct BytesRangePredicateBuilder<'a> {
+#[derive(Debug, Clone)]
+pub enum BytesPredicate {
+    Gt(Vec<u8>),
+    GtEq(Vec<u8>),
+    Lt(Vec<u8>),
+    LtEq(Vec<u8>),
+    Eq(Vec<u8>),
+    InList(Vec<Vec<u8>>),
+    InRangeInclusive(Vec<u8>, Vec<u8>),
+    RegexMatch(String),
+}
+
+pub struct BytesPredicatesBuilder<'a> {
     col_name: &'a str,
     filters: &'a [Expr],
 }
 
-impl<'a> BytesRangePredicateBuilder<'a> {
+impl<'a> BytesPredicatesBuilder<'a> {
     pub fn new(col_name: &'a str, filters: &'a [Expr]) -> Self {
         Self { col_name, filters }
     }
-    pub fn build(&self) -> BytesRange {
-        let mut res = GenericRange::min_to_max();
-        for expr in self.filters {
-            let range = self
-                .extract_bytes_range_from_expr(expr.df_expr())
-                .unwrap_or_else(GenericRange::min_to_max);
-            res = res.and(&range);
-        }
-        res
+    pub fn build(&self) -> Vec<BytesPredicate> {
+        self.filters
+            .iter()
+            .flat_map(|expr| self.extract_bytes_predicate_from_expr(expr.df_expr()))
+            .collect()
     }
 
-    /// Extract time range filter from `WHERE`/`IN (...)`/`BETWEEN` clauses.
-    /// Return None if no time range can be found in expr.
-    fn extract_bytes_range_from_expr(&self, expr: &DfExpr) -> Option<BytesRange> {
+    fn extract_bytes_predicate_from_expr(&self, expr: &DfExpr) -> Vec<BytesPredicate> {
         match expr {
             DfExpr::BinaryExpr(BinaryExpr { left, op, right }) => {
                 self.extract_from_binary_expr(left, op, right)
@@ -454,7 +458,7 @@ impl<'a> BytesRangePredicateBuilder<'a> {
                 list,
                 negated,
             }) => self.extract_from_in_list_expr(expr, *negated, list),
-            _ => None,
+            _ => vec![],
         }
     }
 
@@ -463,81 +467,95 @@ impl<'a> BytesRangePredicateBuilder<'a> {
         left: &DfExpr,
         op: &Operator,
         right: &DfExpr,
-    ) -> Option<BytesRange> {
+    ) -> Vec<BytesPredicate> {
         match op {
             Operator::Eq => self
                 .get_bytes_filter(left, right)
-                .map(|(bytes, _)| BytesRange::single(bytes)),
+                .map_or(vec![], |(bytes, _)| vec![BytesPredicate::Eq(bytes)]),
             Operator::Lt => {
-                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                let Some((bytes, reverse)) = self.get_bytes_filter(left, right) else {
+                    return vec![];
+                };
                 if reverse {
-                    Some(BytesRange::from_start(bytes, true))
+                    vec![BytesPredicate::Gt(bytes)]
                 } else {
-                    Some(BytesRange::until_end(bytes, false))
+                    vec![BytesPredicate::Lt(bytes)]
                 }
             }
             Operator::LtEq => {
-                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                let Some((bytes, reverse)) = self.get_bytes_filter(left, right) else {
+                    return vec![];
+                };
                 if reverse {
-                    Some(BytesRange::from_start(bytes, true))
+                    vec![BytesPredicate::GtEq(bytes)]
                 } else {
-                    Some(BytesRange::until_end(bytes, true))
+                    vec![BytesPredicate::LtEq(bytes)]
                 }
             }
             Operator::Gt => {
-                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                let Some((bytes, reverse)) = self.get_bytes_filter(left, right) else {
+                    return vec![];
+                };
                 if reverse {
                     // [lit] > ts_col
-                    Some(BytesRange::until_end(bytes, false))
+                    vec![BytesPredicate::Lt(bytes)]
                 } else {
                     // ts_col > [lit]
-                    Some(BytesRange::from_start(bytes, false))
+                    vec![BytesPredicate::Gt(bytes)]
                 }
             }
             Operator::GtEq => {
-                let (bytes, reverse) = self.get_bytes_filter(left, right)?;
+                let Some((bytes, reverse)) = self.get_bytes_filter(left, right) else {
+                    return vec![];
+                };
                 if reverse {
                     // [lit] >= ts_col
-                    Some(BytesRange::until_end(bytes, true))
+                    vec![BytesPredicate::LtEq(bytes)]
                 } else {
                     // ts_col >= [lit]
-                    Some(BytesRange::from_start(bytes, true))
+                    vec![BytesPredicate::GtEq(bytes)]
                 }
             }
             Operator::And => {
-                // instead of return none when failed to extract time range from left/right, we unwrap the none into
-                // `TimestampRange::min_to_max`.
-                let left = self
-                    .extract_bytes_range_from_expr(left)
-                    .unwrap_or_else(BytesRange::min_to_max);
-                let right = self
-                    .extract_bytes_range_from_expr(right)
-                    .unwrap_or_else(BytesRange::min_to_max);
-                Some(left.and(&right))
+                let mut left = self.extract_bytes_predicate_from_expr(left);
+                let right = self.extract_bytes_predicate_from_expr(right);
+                left.extend(right.into_iter());
+                left
             }
-            Operator::Or => {
-                let left = self.extract_bytes_range_from_expr(left)?;
-                let right = self.extract_bytes_range_from_expr(right)?;
-                Some(left.or(&right))
+            Operator::RegexMatch => {
+                let DfExpr::Column(col) = left else {
+                    return vec![];
+                };
+                if col.name != self.col_name {
+                    return vec![];
+                }
+                let DfExpr::Literal(scalar) = right else {
+                    return vec![];
+                };
+                if let ScalarValue::Utf8(Some(s)) = scalar {
+                    vec![BytesPredicate::RegexMatch(s.clone())]
+                } else {
+                    vec![]
+                }
             }
-            Operator::NotEq
-            | Operator::Plus
+            Operator::Plus
+            | Operator::NotEq
+            | Operator::Or
             | Operator::Minus
             | Operator::Multiply
             | Operator::Divide
             | Operator::Modulo
             | Operator::IsDistinctFrom
             | Operator::IsNotDistinctFrom
-            | Operator::RegexMatch
-            | Operator::RegexIMatch
             | Operator::RegexNotMatch
+            | Operator::RegexIMatch
             | Operator::RegexNotIMatch
             | Operator::BitwiseAnd
             | Operator::BitwiseOr
             | Operator::BitwiseXor
             | Operator::BitwiseShiftRight
             | Operator::BitwiseShiftLeft
-            | Operator::StringConcat => None,
+            | Operator::StringConcat => vec![],
         }
     }
 
@@ -561,25 +579,29 @@ impl<'a> BytesRangePredicateBuilder<'a> {
         negated: &bool,
         low: &DfExpr,
         high: &DfExpr,
-    ) -> Option<BytesRange> {
+    ) -> Vec<BytesPredicate> {
         let DfExpr::Column(col) = expr else {
-            return None;
+            return vec![];
         };
         if col.name != self.col_name {
-            return None;
-        }
-
-        if *negated {
-            return None;
+            return vec![];
         }
 
         match (low, high) {
             (DfExpr::Literal(low), DfExpr::Literal(high)) => {
-                let low_opt = scalar_value_to_bytes(low);
-                let high_opt = scalar_value_to_bytes(high);
-                Some(BytesRange::new_inclusive(low_opt, high_opt))
+                let Some(low_opt) = scalar_value_to_bytes(low) else {
+                    return vec![];
+                };
+                let Some(high_opt) = scalar_value_to_bytes(high) else {
+                    return vec![];
+                };
+                if *negated {
+                    vec![]
+                } else {
+                    vec![BytesPredicate::InRangeInclusive(low_opt, high_opt)]
+                }
             }
-            _ => None,
+            _ => vec![],
         }
     }
 
@@ -589,33 +611,28 @@ impl<'a> BytesRangePredicateBuilder<'a> {
         expr: &DfExpr,
         negated: bool,
         list: &[DfExpr],
-    ) -> Option<BytesRange> {
+    ) -> Vec<BytesPredicate> {
         if negated {
-            return None;
+            return vec![];
         }
         let DfExpr::Column(col) = expr else {
-            return None;
+            return vec![];
         };
         if col.name != self.col_name {
-            return None;
+            return vec![];
         }
 
-        if list.is_empty() {
-            return Some(BytesRange::empty());
-        }
-        let mut init_range = BytesRange::empty();
+        let mut in_list = Vec::with_capacity(list.len());
         for expr in list {
             if let DfExpr::Literal(scalar) = expr {
-                if let Some(timestamp) = scalar_value_to_bytes(scalar) {
-                    init_range = init_range.or(&BytesRange::single(timestamp))
+                if let Some(bytes) = scalar_value_to_bytes(scalar) {
+                    in_list.push(bytes);
                 } else {
-                    // TODO(hl): maybe we should raise an error here since cannot parse
-                    // timestamp value from in list expr
-                    return None;
+                    return vec![];
                 }
             }
         }
-        Some(init_range)
+        vec![BytesPredicate::InList(in_list)]
     }
 }
 
