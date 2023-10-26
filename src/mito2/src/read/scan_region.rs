@@ -15,7 +15,7 @@
 //! Scans a region according to the scan request.
 
 use common_recordbatch::SendableRecordBatchStream;
-use common_telemetry::{debug, info};
+use common_telemetry::debug;
 use common_time::range::TimestampRange;
 use snafu::ResultExt;
 use store_api::storage::ScanRequest;
@@ -188,7 +188,6 @@ impl ScanRegion {
             .version
             .metadata
             .primary_key_columns()
-            .skip(1) // ignore first
             .map(|c| c.column_schema.name.clone())
         {
             let bytes_pred = BytesPredicatesBuilder::new(&pk_column, &self.request.filters).build();

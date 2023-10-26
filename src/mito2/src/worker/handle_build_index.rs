@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::SeekFrom;
 use std::sync::Arc;
 
+use common_base::BitVec;
 use common_query::Output;
 use common_telemetry::info;
 use datatypes::value::Value;
@@ -206,15 +207,17 @@ impl IndexWriter {
 
 struct ColumnIndexBuilder {
     column_name: String,
-    value_to_row_groups: BTreeMap<Vec<u8>, roaring::bitmap::RoaringBitmap>,
+    value_to_row_groups: BTreeMap<Vec<u8>, BitVec>,
 }
 
 impl ColumnIndexBuilder {
     fn write(&self, writer: &mut BlockingWriter) -> usize {
         let mut bytes_to_write = 0;
         let mut fst_builder = fst::MapBuilder::memory();
+        let writer = &mut *writer as &mut dyn std::io::Write;
+
         for (value, row_groups) in &self.value_to_row_groups {
-            let size = row_groups.serialized_size();
+            let size = row_groups.as_raw_slice().len();
 
             // encode offset as u32, size as u32, combine into u64
             let offset_and_size = ((bytes_to_write as u64) << 32) | (size as u64);
@@ -222,9 +225,9 @@ impl ColumnIndexBuilder {
                 .insert(value, offset_and_size as u64)
                 .expect("Failed to insert value to fst");
 
-            row_groups
-                .serialize_into(&mut *writer)
-                .expect("Failed to serialize row groups");
+            writer
+                .write(row_groups.as_raw_slice())
+                .expect("Failed to write bitmap");
 
             bytes_to_write += size;
         }
@@ -233,14 +236,14 @@ impl ColumnIndexBuilder {
             .into_inner()
             .expect("Failed to get fst builder inner");
         let fst_size = fst_bytes.len();
-        writer.write(fst_bytes).expect("Failed to write fst bytes");
+        writer.write(&fst_bytes).expect("Failed to write fst bytes");
 
         // write fst size
         let fst_size_u64 = fst_size as u64;
         let fst_size_bytes = fst_size_u64.to_le_bytes().to_vec();
         let offset_of_fst_bytes_size = 8;
         writer
-            .write(fst_size_bytes)
+            .write(&fst_size_bytes)
             .expect("Failed to write offset of indexes");
 
         info!(
@@ -360,10 +363,12 @@ fn merge_column_index_builders(
             .zip(column_index_builders.iter_mut())
         {
             for value in values {
-                value_to_row_groups
-                    .entry(value)
-                    .or_default()
-                    .insert(row_group as u32);
+                let bitvec = value_to_row_groups.entry(value).or_default();
+
+                if bitvec.len() < row_group + 1 {
+                    bitvec.resize(row_group + 1, false);
+                }
+                bitvec.set(row_group, true);
             }
         }
     }
@@ -538,12 +543,8 @@ impl<'a> InvertedValuesReader<'a> {
         bitmap_offset_sizes
     }
 
-    pub async fn apply(&mut self, predicates: &[BytesPredicate]) -> roaring::bitmap::RoaringBitmap {
-        if predicates.is_empty() {
-            return roaring::RoaringBitmap::full();
-        }
+    pub async fn apply(&mut self, predicates: &[BytesPredicate], mut row_groups: BitVec) -> BitVec {
         let bitmap_offset_sizes = self.apply_predicates_to_offsets(predicates);
-        let mut bitmap = roaring::RoaringBitmap::new();
         for bitmap_offset_size in bitmap_offset_sizes {
             let offset = (bitmap_offset_size >> 32) as u64;
             let size = (bitmap_offset_size & 0xffffffff) as usize;
@@ -557,10 +558,11 @@ impl<'a> InvertedValuesReader<'a> {
                 .await
                 .expect("Failed to read bitmap bytes");
 
-            bitmap |= roaring::RoaringBitmap::deserialize_from(&mut bitmap_bytes.as_slice())
-                .expect("Failed to deserialize");
+            let read_bitvec =
+                BitVec::try_from_slice(bitmap_bytes.as_slice()).expect("Failed to deserialize");
+            row_groups |= read_bitvec;
         }
 
-        bitmap
+        row_groups
     }
 }

@@ -14,13 +14,13 @@
 
 //! Parquet reader.
 
-use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use bytes::Bytes;
+use common_base::BitVec;
 use common_telemetry::info;
 use common_time::range::TimestampRange;
 use datatypes::arrow::record_batch::RecordBatch;
@@ -47,7 +47,6 @@ use crate::error::{
 use crate::read::{Batch, BatchReader};
 use crate::sst::file::{FileHandle, FileId};
 use crate::sst::parquet::format::ReadFormat;
-use crate::sst::parquet::stats::RowGroupPruningStats;
 use crate::sst::parquet::{DEFAULT_READ_BATCH_SIZE, PARQUET_METADATA_KEY};
 use crate::worker::handle_build_index::ColumnIndexReaderBuilder;
 
@@ -169,18 +168,6 @@ impl ParquetReaderBuilder {
         let key_value_meta = builder.metadata().file_metadata().key_value_metadata();
         let region_meta = self.get_region_metadata(file_path, key_value_meta)?;
 
-        let column_ids: HashSet<_> = self
-            .projection
-            .as_ref()
-            .map(|p| p.iter().cloned().collect())
-            .unwrap_or_else(|| {
-                region_meta
-                    .column_metadatas
-                    .iter()
-                    .map(|c| c.column_id)
-                    .collect()
-            });
-
         let read_format = ReadFormat::new(Arc::new(region_meta));
         // The arrow schema converted from the region meta should be the same as parquet's.
         // We only compare fields to avoid schema's metadata breaks the comparison.
@@ -196,62 +183,48 @@ impl ParquetReaderBuilder {
             }
         );
 
-        let mut row_groups =
-            roaring::RoaringBitmap::from_iter(0..builder.metadata().row_groups().len() as u32);
-        let index_file_path = join_path(
-            &self.file_dir,
-            &format!("{}.index", self.file_handle.file_id()),
-        );
-        if self
-            .object_store
-            .is_exist(&index_file_path)
-            .await
-            .expect("Failed to check index file existence")
-        {
-            info!("Found index file {}", index_file_path);
-            let reader = self
-                .object_store
-                .reader(&index_file_path)
-                .await
-                .expect("Failed to read index file");
-            let mut index_reader = ColumnIndexReaderBuilder::new(reader).build().await;
-
-            for (column_name, predicates) in &self.pk_bytes_predicates {
-                info!("Appling predicates {:?} to column index {}", predicates, column_name);
-                let index = index_reader.read_column_index(column_name).await;
-                let Some(mut index) = index else {
-                    continue;
-                };
-
-                let bm = index.apply(predicates).await;
-                row_groups &= &bm;
-                info!(
-                    "Apply predicates {:?} to column index {}, got row groups {}, total row groups {}",
-                    predicates,
-                    column_name,
-                    bm.len(),
-                    row_groups.len()
-                );
-            }
-        }
-
-        // Prune row groups by metadata.
-        if let Some(predicate) = &self.predicate {
-            let stats = RowGroupPruningStats::new(
-                builder.metadata().row_groups(),
-                &read_format,
-                column_ids,
+        if !self.pk_bytes_predicates.is_empty() {
+            let row_group_len = builder.metadata().row_groups().len();
+            let mut row_groups = BitVec::repeat(true, row_group_len);
+            let index_file_path = join_path(
+                &self.file_dir,
+                &format!("{}.index", self.file_handle.file_id()),
             );
-            let pruned_row_groups = predicate
-                .prune_with_stats(&stats)
-                .into_iter()
-                .enumerate()
-                .filter_map(|(idx, valid)| {
-                    let valid = valid && row_groups.contains(idx as u32);
-                    valid.then_some(idx)
-                })
-                .collect::<Vec<_>>();
-            builder = builder.with_row_groups(pruned_row_groups);
+            if self
+                .object_store
+                .is_exist(&index_file_path)
+                .await
+                .expect("Failed to check index file existence")
+            {
+                info!("Found index file {}", index_file_path);
+                let reader = self
+                    .object_store
+                    .reader(&index_file_path)
+                    .await
+                    .expect("Failed to read index file");
+                let mut index_reader = ColumnIndexReaderBuilder::new(reader).build().await;
+
+                for (column_name, predicates) in &self.pk_bytes_predicates {
+                    let index = index_reader.read_column_index(column_name).await;
+                    let Some(mut index) = index else {
+                        continue;
+                    };
+
+                    let bm = index
+                        .apply(predicates, BitVec::repeat(false, row_group_len))
+                        .await;
+                    row_groups &= &bm;
+                    info!(
+                        "Apply predicates {:?} to column index {}, got row groups {}, total row groups {}",
+                        predicates,
+                        column_name,
+                        bm.count_ones(),
+                        row_groups.count_ones(),
+                    );
+                }
+
+                builder = builder.with_row_groups(row_groups.iter_ones().collect());
+            }
         }
 
         let parquet_schema_desc = builder.metadata().file_metadata().schema_descr();
