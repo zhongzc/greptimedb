@@ -43,7 +43,7 @@ use crate::metrics::{READ_ROWS_TOTAL, READ_STAGE_ELAPSED};
 use crate::read::{Batch, BatchReader};
 use crate::sst::file::FileHandle;
 use crate::sst::parquet::format::ReadFormat;
-use crate::sst::parquet::row_group::InMemoryRowGroup;
+use crate::sst::parquet::row_group::RowGroupFetcher;
 use crate::sst::parquet::stats::RowGroupPruningStats;
 use crate::sst::parquet::{DEFAULT_READ_BATCH_SIZE, PARQUET_METADATA_KEY};
 
@@ -303,7 +303,7 @@ impl RowGroupReaderBuilder {
 
     /// Builds a [ParquetRecordBatchReader] to read the row group at `row_group_idx`.
     async fn build(&mut self, row_group_idx: usize) -> Result<ParquetRecordBatchReader> {
-        let mut row_group = InMemoryRowGroup::create(
+        let fetcher = RowGroupFetcher::create(
             self.file_handle.region_id(),
             self.file_handle.file_id(),
             &self.parquet_meta,
@@ -313,7 +313,7 @@ impl RowGroupReaderBuilder {
             self.object_store.clone(),
         );
         // Fetches data into memory.
-        row_group
+        let row_group = fetcher
             .fetch(&self.projection, None)
             .await
             .context(ReadParquetSnafu {
