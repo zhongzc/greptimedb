@@ -51,6 +51,7 @@ use crate::read::{Batch, BatchReader};
 use crate::row_converter::{McmpRowCodec, RowCodec, SortField};
 use crate::sst::file::FileHandle;
 use crate::sst::index::applier::SstIndexApplierRef;
+use crate::sst::location;
 use crate::sst::parquet::format::ReadFormat;
 use crate::sst::parquet::metadata::MetadataLoader;
 use crate::sst::parquet::row_group::InMemoryRowGroup;
@@ -300,7 +301,8 @@ impl ParquetReaderBuilder {
             return None;
         };
 
-        if !self.file_handle.meta().inverted_index_available() {
+        let path = location::index_file_path(&self.file_dir, self.file_handle.file_id());
+        if !self.object_store.is_exist(&path).await.unwrap() {
             return None;
         }
 
