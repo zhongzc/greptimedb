@@ -20,7 +20,8 @@ use clap::{FromArgMatches, Parser, Subcommand};
 use cmd::error::Result;
 use cmd::options::{CliOptions, Options};
 use cmd::{
-    cli, datanode, frontend, greptimedb_cli, log_versions, metasrv, standalone, start_app, App,
+    cli, datanode, frontend, greptimedb_cli, indexer, log_versions, metasrv, standalone, start_app,
+    App,
 };
 
 #[derive(Parser)]
@@ -33,6 +34,8 @@ enum SubCommand {
     Metasrv(metasrv::Command),
     #[clap(name = "standalone")]
     Standalone(standalone::Command),
+    #[clap(name = "indexer")]
+    Indexer(indexer::Command),
     #[clap(name = "cli")]
     Cli(cli::Command),
 }
@@ -60,6 +63,10 @@ impl SubCommand {
                 let app = cmd.build().await?;
                 Box::new(app) as _
             }
+            (SubCommand::Indexer(cmd), Options::Indexer(opts)) => {
+                let app = cmd.build(*opts).await?;
+                Box::new(app) as _
+            }
 
             _ => unreachable!(),
         };
@@ -72,6 +79,7 @@ impl SubCommand {
             SubCommand::Frontend(cmd) => cmd.load_options(cli_options),
             SubCommand::Metasrv(cmd) => cmd.load_options(cli_options),
             SubCommand::Standalone(cmd) => cmd.load_options(cli_options),
+            SubCommand::Indexer(cmd) => cmd.load_options(cli_options),
             SubCommand::Cli(cmd) => cmd.load_options(cli_options),
         }
     }
@@ -84,6 +92,7 @@ impl fmt::Display for SubCommand {
             SubCommand::Frontend(..) => write!(f, "greptime-frontend"),
             SubCommand::Metasrv(..) => write!(f, "greptime-metasrv"),
             SubCommand::Standalone(..) => write!(f, "greptime-standalone"),
+            SubCommand::Indexer(..) => write!(f, "greptime-indexer"),
             SubCommand::Cli(_) => write!(f, "greptime-cli"),
         }
     }

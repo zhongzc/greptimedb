@@ -15,7 +15,7 @@
 //! object storage utilities
 
 mod azblob;
-mod fs;
+pub mod fs;
 mod gcs;
 mod oss;
 mod s3;
@@ -42,7 +42,7 @@ pub(crate) async fn new_object_store(
     let data_home = normalize_dir(data_home);
     let object_store = match &store {
         ObjectStoreConfig::File(file_config) => {
-            fs::new_fs_object_store(&data_home, file_config).await
+            fs::new_fs_object_store(&data_home, ".tmp/", file_config).await
         }
         ObjectStoreConfig::S3(s3_config) => s3::new_s3_object_store(s3_config).await,
         ObjectStoreConfig::Oss(oss_config) => oss::new_oss_object_store(oss_config).await,

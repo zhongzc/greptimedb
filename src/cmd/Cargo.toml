@@ -70,6 +70,9 @@ substrait.workspace = true
 table.workspace = true
 tokio.workspace = true
 toml.workspace = true
+object-store.workspace = true
+itertools.workspace = true
+parquet.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.5"

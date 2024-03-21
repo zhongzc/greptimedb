@@ -427,7 +427,9 @@ impl DatanodeBuilder {
     }
 
     /// Builds [ObjectStoreManager]
-    async fn build_object_store_manager(opts: &DatanodeOptions) -> Result<ObjectStoreManagerRef> {
+    pub async fn build_object_store_manager(
+        opts: &DatanodeOptions,
+    ) -> Result<ObjectStoreManagerRef> {
         let object_store =
             store::new_object_store(opts.storage.store.clone(), &opts.storage.data_home).await?;
         let default_name = opts.storage.store.name();

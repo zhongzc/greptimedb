@@ -14,9 +14,9 @@
 
 //! SST in parquet format.
 
-mod format;
+pub mod format;
 pub(crate) mod helper;
-pub(crate) mod metadata;
+pub mod metadata;
 mod page_reader;
 pub mod reader;
 pub mod row_group;
@@ -38,7 +38,7 @@ pub const PARQUET_METADATA_KEY: &str = "greptime:metadata";
 /// Default batch size to read parquet files.
 pub(crate) const DEFAULT_READ_BATCH_SIZE: usize = 1024;
 /// Default row group size for parquet files.
-const DEFAULT_ROW_GROUP_SIZE: usize = 100 * DEFAULT_READ_BATCH_SIZE;
+pub const DEFAULT_ROW_GROUP_SIZE: usize = 100 * DEFAULT_READ_BATCH_SIZE;
 
 /// Parquet write options.
 #[derive(Debug)]

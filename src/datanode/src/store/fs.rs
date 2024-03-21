@@ -24,15 +24,16 @@ use crate::config::FileConfig;
 use crate::error::{self, Result};
 use crate::store;
 
-pub(crate) async fn new_fs_object_store(
+pub async fn new_fs_object_store(
     data_home: &str,
+    child: &str,
     _file_config: &FileConfig,
 ) -> Result<ObjectStore> {
     fs::create_dir_all(path::Path::new(&data_home))
         .context(error::CreateDirSnafu { dir: data_home })?;
     info!("The file storage home is: {}", data_home);
 
-    let atomic_write_dir = join_dir(data_home, ".tmp/");
+    let atomic_write_dir = join_dir(data_home, child);
     store::clean_temp_dir(&atomic_write_dir)?;
 
     let mut builder = Fs::default();

@@ -58,6 +58,7 @@ pub enum Options {
     Frontend(Box<FrontendOptions>),
     Metasrv(Box<MetaSrvOptions>),
     Standalone(Box<MixOptions>),
+    Indexer(Box<MixOptions>),
     Cli(Box<LoggingOptions>),
 }
 
@@ -96,6 +97,7 @@ impl Options {
             Options::Frontend(opts) => &opts.logging,
             Options::Metasrv(opts) => &opts.logging,
             Options::Standalone(opts) => &opts.logging,
+            Options::Indexer(opts) => &opts.logging,
             Options::Cli(opts) => opts,
         }
     }
@@ -165,6 +167,7 @@ impl Options {
             Options::Datanode(opt) => opt.node_id.map(|x| x.to_string()),
             Options::Frontend(opt) => opt.node_id.clone(),
             Options::Standalone(opt) => opt.frontend.node_id.clone(),
+            Options::Indexer(opt) => opt.frontend.node_id.clone(),
         }
     }
 }

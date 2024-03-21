@@ -114,7 +114,7 @@ impl WriteFormat {
 }
 
 /// Helper for reading the SST format.
-pub(crate) struct ReadFormat {
+pub struct ReadFormat {
     metadata: RegionMetadataRef,
     /// SST file schema.
     arrow_schema: SchemaRef,
@@ -130,7 +130,7 @@ pub(crate) struct ReadFormat {
 
 impl ReadFormat {
     /// Creates a helper with existing `metadata`.
-    pub(crate) fn new(metadata: RegionMetadataRef) -> ReadFormat {
+    pub fn new(metadata: RegionMetadataRef) -> ReadFormat {
         let field_id_to_index: HashMap<_, _> = metadata
             .field_columns()
             .enumerate()
@@ -150,7 +150,7 @@ impl ReadFormat {
     ///
     /// This schema is computed from the region metadata but should be the same
     /// as the arrow schema decoded from the file metadata.
-    pub(crate) fn arrow_schema(&self) -> &SchemaRef {
+    pub fn arrow_schema(&self) -> &SchemaRef {
         &self.arrow_schema
     }
 
@@ -186,7 +186,7 @@ impl ReadFormat {
     /// Convert a arrow record batch into `batches`.
     ///
     /// Note that the `record_batch` may only contains a subset of columns if it is projected.
-    pub(crate) fn convert_record_batch(
+    pub fn convert_record_batch(
         &mut self,
         record_batch: &RecordBatch,
         batches: &mut VecDeque<Batch>,

@@ -24,7 +24,7 @@ use crate::error::{self, Result};
 const DEFAULT_PREFETCH_SIZE: u64 = 64 * 1024;
 
 /// Load the metadata of parquet file in an async way.
-pub(crate) struct MetadataLoader<'a> {
+pub struct MetadataLoader<'a> {
     // An object store that supports async read
     object_store: ObjectStore,
     // The path of parquet file

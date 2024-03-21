@@ -15,7 +15,7 @@
 pub(crate) mod applier;
 mod codec;
 pub(crate) mod creator;
-pub(crate) mod intermediate;
+pub mod intermediate;
 mod store;
 
 use std::num::NonZeroUsize;
@@ -133,23 +133,23 @@ impl Indexer {
     }
 }
 
-pub(crate) struct IndexerBuilder<'a> {
-    pub(crate) create_inverted_index: bool,
-    pub(crate) mem_threshold_index_create: Option<usize>,
-    pub(crate) write_buffer_size: Option<usize>,
-    pub(crate) file_id: FileId,
-    pub(crate) file_path: String,
-    pub(crate) metadata: &'a RegionMetadataRef,
-    pub(crate) row_group_size: usize,
-    pub(crate) object_store: ObjectStore,
-    pub(crate) intermediate_manager: IntermediateManager,
-    pub(crate) index_options: IndexOptions,
+pub struct IndexerBuilder<'a> {
+    pub create_inverted_index: bool,
+    pub mem_threshold_index_create: Option<usize>,
+    pub write_buffer_size: Option<usize>,
+    pub file_id: FileId,
+    pub file_path: String,
+    pub metadata: &'a RegionMetadataRef,
+    pub row_group_size: usize,
+    pub object_store: ObjectStore,
+    pub intermediate_manager: IntermediateManager,
+    pub index_options: IndexOptions,
 }
 
 impl<'a> IndexerBuilder<'a> {
     /// Sanity check for arguments and create a new [Indexer]
     /// with inner [SstIndexCreator] if arguments are valid.
-    pub(crate) fn build(self) -> Indexer {
+    pub fn build(self) -> Indexer {
         if !self.create_inverted_index {
             debug!(
                 "Skip creating index due to request, region_id: {}, file_id: {}",
