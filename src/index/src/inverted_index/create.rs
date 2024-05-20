@@ -51,6 +51,12 @@ pub trait InvertedIndexCreator: Send {
         n: usize,
     ) -> Result<()>;
 
+    async fn push_values_with_name(
+        &mut self,
+        index_name: &str,
+        values: &[BytesRef<'_>],
+    ) -> Result<()>;
+
     /// Finalizes the index creation process, ensuring all data is properly indexed and stored
     /// in the provided writer
     async fn finish(&mut self, writer: &mut dyn InvertedIndexWriter) -> Result<()>;

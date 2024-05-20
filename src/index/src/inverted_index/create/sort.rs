@@ -52,6 +52,8 @@ pub trait Sorter: Send {
     /// Should be equivalent to calling `push` n times
     async fn push_n(&mut self, value: Option<BytesRef<'_>>, n: usize) -> Result<()>;
 
+    async fn push_multi(&mut self, values: &[BytesRef<'_>]) -> Result<()>;
+
     /// Completes the sorting process and returns the sorted data
     async fn output(&mut self) -> Result<SortOutput>;
 }

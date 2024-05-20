@@ -104,6 +104,17 @@ impl Sorter for ExternalSorter {
         }
     }
 
+    async fn push_multi(&mut self, values: &[BytesRef<'_>]) -> Result<()> {
+        let segment_index_range = self.segment_index_range(1, false);
+        self.total_row_count += 1;
+
+        let mut memory_diff = 0;
+        for value in values {
+            memory_diff += self.push_not_null(value, segment_index_range.clone());
+        }
+        self.may_dump_buffer(memory_diff).await
+    }
+
     /// Finalizes the sorting operation, merging data from both in-memory buffer and external files
     /// into a sorted stream
     async fn output(&mut self) -> Result<SortOutput> {

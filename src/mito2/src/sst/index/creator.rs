@@ -21,6 +21,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use common_telemetry::warn;
+use datatypes::value::ValueRef;
 use index::inverted_index::create::sort::external_sort::ExternalSorter;
 use index::inverted_index::create::sort_create::SortIndexCreator;
 use index::inverted_index::create::InvertedIndexCreator;
@@ -29,6 +30,7 @@ use object_store::ObjectStore;
 use puffin::file_format::writer::{Blob, PuffinAsyncWriter, PuffinFileWriter};
 use snafu::{ensure, ResultExt};
 use store_api::metadata::RegionMetadataRef;
+use store_api::storage::{self, ConcreteDataType};
 use tokio::io::duplex;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -83,6 +85,8 @@ pub struct SstIndexCreator {
 
     /// The memory usage of the index creator.
     memory_usage: Arc<AtomicUsize>,
+
+    log_column_id: Option<storage::ColumnId>,
 }
 
 impl SstIndexCreator {
@@ -113,6 +117,9 @@ impl SstIndexCreator {
         let index_creator = Box::new(SortIndexCreator::new(sorter, segment_row_count));
 
         let codec = IndexValuesCodec::from_tag_columns(metadata.primary_key_columns());
+
+        let log_column_id = metadata.column_by_name("log").map(|meta| meta.column_id);
+
         Self {
             file_path,
             store: InstrumentedStore::new(index_store),
@@ -127,6 +134,7 @@ impl SstIndexCreator {
 
             ignore_column_ids: HashSet::default(),
             memory_usage,
+            log_column_id,
         }
     }
 
@@ -231,6 +239,30 @@ impl SstIndexCreator {
                 .push_with_name_n(column_id, value, n)
                 .await
                 .context(PushIndexValueSnafu)?;
+        }
+
+        if let Some(log_column_id) = self.log_column_id {
+            let log_values = batch.fields().iter().find(|b| b.column_id == log_column_id);
+
+            if let Some(log_values) = log_values {
+                if log_values.data.data_type() != ConcreteDataType::string_datatype() {
+                    panic!("log column must be string");
+                }
+
+                let len = log_values.data.len();
+                for i in 0..len {
+                    let value = log_values.data.get_ref(i);
+                    if let ValueRef::String(s) = value {
+                        let tokens = s.split(' ').map(|s| s.as_bytes()).collect::<Vec<_>>();
+                        self.index_creator
+                            .push_values_with_name(&log_column_id.to_string(), &tokens)
+                            .await
+                            .context(PushIndexValueSnafu)?;
+                    } else {
+                        panic!("log column must be string");
+                    }
+                }
+            }
         }
 
         Ok(())

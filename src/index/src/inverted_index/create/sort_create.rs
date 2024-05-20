@@ -67,6 +67,23 @@ impl InvertedIndexCreator for SortIndexCreator {
         }
     }
 
+    async fn push_values_with_name(
+        &mut self,
+        index_name: &str,
+        values: &[BytesRef<'_>],
+    ) -> Result<()> {
+        match self.sorters.get_mut(index_name) {
+            Some(sorter) => sorter.push_multi(values).await,
+            None => {
+                let index_name = index_name.to_string();
+                let mut sorter = (self.sorter_factory)(index_name.clone(), self.segment_row_count);
+                sorter.push_multi(values).await?;
+                self.sorters.insert(index_name, sorter);
+                Ok(())
+            }
+        }
+    }
+
     /// Finalizes the sorting for all indexes and writes them using the inverted index writer
     async fn finish(&mut self, writer: &mut dyn InvertedIndexWriter) -> Result<()> {
         let mut output_row_count = None;
@@ -272,6 +289,10 @@ mod tests {
             set_bit(bitmap, segment_index);
 
             Ok(())
+        }
+
+        async fn push_multi(&mut self, values: &[BytesRef<'_>]) -> Result<()> {
+            unimplemented!()
         }
 
         async fn push_n(&mut self, value: Option<BytesRef<'_>>, n: usize) -> Result<()> {
