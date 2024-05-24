@@ -17,7 +17,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::{Buf, Bytes, BytesMut};
 use common_function::function_registry::FUNCTION_REGISTRY;
+use common_function::scalars::matches::MatchesFunction;
 use common_function::scalars::udf::create_udf;
+use common_function::state::FunctionState;
 use datafusion::catalog::CatalogProviderList;
 use datafusion::execution::context::SessionState;
 use datafusion::execution::runtime_env::RuntimeEnv;
@@ -28,7 +30,7 @@ use datafusion_substrait::logical_plan::consumer::from_substrait_plan;
 use datafusion_substrait::logical_plan::producer::to_substrait_plan;
 use datafusion_substrait::substrait::proto::Plan;
 use prost::Message;
-use session::context::QueryContextRef;
+use session::context::{QueryContext, QueryContextRef};
 use snafu::ResultExt;
 
 use crate::error::{
@@ -59,6 +61,14 @@ impl SubstraitPlan for DFLogicalSubstraitConvertor {
         }
 
         let mut context = SessionContext::new_with_state(state);
+
+        let udf = create_udf(
+            Arc::new(MatchesFunction),
+            QueryContext::arc(),
+            Arc::new(FunctionState::default()),
+        );
+        context.register_udf(udf.into());
+
         context.register_catalog_list(catalog_list);
         let plan = Plan::decode(message).context(DecodeRelSnafu)?;
         let df_plan = from_substrait_plan(&context, &plan)
@@ -83,6 +93,13 @@ impl DFLogicalSubstraitConvertor {
             SessionState::new_with_config_rt(SessionConfig::new(), Arc::new(RuntimeEnv::default()))
                 .with_serializer_registry(Arc::new(ExtensionSerializer));
         let context = SessionContext::new_with_state(session_state);
+
+        let udf = create_udf(
+            Arc::new(MatchesFunction),
+            QueryContext::arc(),
+            Arc::new(FunctionState::default()),
+        );
+        context.register_udf(udf.into());
 
         to_substrait_plan(plan, &context).context(EncodeDfPlanSnafu)
     }

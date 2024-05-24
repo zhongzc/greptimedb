@@ -57,7 +57,7 @@ use api::region::RegionResponse;
 use async_trait::async_trait;
 use common_error::ext::BoxedError;
 use common_recordbatch::SendableRecordBatchStream;
-use common_telemetry::tracing;
+use common_telemetry::{info, tracing};
 use object_store::manager::ObjectStoreManagerRef;
 use snafu::{ensure, OptionExt, ResultExt};
 use store_api::logstore::LogStore;
@@ -319,6 +319,8 @@ impl RegionEngine for MitoEngine {
         region_id: RegionId,
         request: ScanRequest,
     ) -> std::result::Result<SendableRecordBatchStream, BoxedError> {
+        info!("handle_query: region_id: {}", region_id);
+
         self.scanner(region_id, request)
             .map_err(BoxedError::new)?
             .scan()

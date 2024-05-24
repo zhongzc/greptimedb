@@ -22,9 +22,9 @@ use std::collections::{HashMap, HashSet};
 
 use api::v1::SemanticType;
 use common_query::logical_plan::Expr;
-use common_telemetry::warn;
+use common_telemetry::{info, warn};
 use datafusion_common::ScalarValue;
-use datafusion_expr::{BinaryExpr, Expr as DfExpr, Operator};
+use datafusion_expr::{BinaryExpr, Expr as DfExpr, Operator, ScalarFunctionDefinition};
 use datatypes::data_type::ConcreteDataType;
 use datatypes::value::Value;
 use index::inverted_index::search::index_apply::PredicatesIndexApplier;
@@ -85,6 +85,16 @@ impl<'a> SstIndexApplierBuilder<'a> {
     pub fn build(mut self, exprs: &[Expr]) -> Result<Option<SstIndexApplier>> {
         for expr in exprs {
             self.traverse_and_collect(expr.df_expr());
+
+            if let DfExpr::ScalarFunction(f) = expr.df_expr()
+                && let ScalarFunctionDefinition::UDF(udf) = &f.func_def
+                && udf.name() == "matches"
+            {
+                let pattern = &f.args[1];
+                if let DfExpr::Literal(literal) = pattern {
+                    println!("Pattern: {}", literal.to_string());
+                }
+            }
         }
 
         if self.output.is_empty() {

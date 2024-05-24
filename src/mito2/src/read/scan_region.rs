@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use common_recordbatch::SendableRecordBatchStream;
-use common_telemetry::{debug, error, warn};
+use common_telemetry::{debug, error, info, warn};
 use common_time::range::TimestampRange;
 use store_api::storage::ScanRequest;
 use table::predicate::{Predicate, TimeRangePredicateBuilder};
@@ -227,6 +227,9 @@ impl ScanRegion {
 
     /// Creates a scan input.
     fn scan_input(self, filter_deleted: bool) -> Result<ScanInput> {
+        info!("[DEBUG] filters in scan request: {:?}", &self.request.filters);
+        println!("filters in scan request: {:?}", &self.request.filters);
+
         let time_range = self.build_time_range_predicate();
 
         let ssts = &self.version.ssts;

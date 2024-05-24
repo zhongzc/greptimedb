@@ -16,6 +16,7 @@ pub mod aggregate;
 pub(crate) mod date;
 pub mod expression;
 pub mod math;
+pub mod matches;
 pub mod numpy;
 #[cfg(test)]
 pub(crate) mod test;
