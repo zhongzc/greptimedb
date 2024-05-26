@@ -15,6 +15,7 @@
 mod between;
 mod comparison;
 mod eq_list;
+mod fulltext_match;
 mod in_list;
 mod regex_match;
 
@@ -82,20 +83,8 @@ impl<'a> SstIndexApplierBuilder<'a> {
     /// Consumes the builder to construct an [`SstIndexApplier`], optionally returned based on
     /// the expressions provided. If no predicates match, returns `None`.
     pub fn build(mut self, exprs: &[Expr]) -> Result<Option<SstIndexApplier>> {
-        info!("[DEBUG] filters: {:?}", exprs);
-
         for expr in exprs {
             self.traverse_and_collect(expr);
-
-            if let Expr::ScalarFunction(f) = expr
-                && let ScalarFunctionDefinition::UDF(udf) = &f.func_def
-                && udf.name() == "matches"
-            {
-                let pattern = &f.args[1];
-                if let Expr::Literal(literal) = pattern {
-                    info!("Pattern: {:?}", literal.to_string());
-                }
-            }
         }
 
         if self.output.is_empty() {
@@ -107,6 +96,8 @@ impl<'a> SstIndexApplierBuilder<'a> {
             .into_iter()
             .map(|(column_id, predicates)| (column_id.to_string(), predicates))
             .collect();
+        info!("Built predicates for SST index applier: {predicates:?}");
+
         let applier = PredicatesIndexApplier::try_from(predicates);
         Ok(Some(SstIndexApplier::new(
             self.region_dir,
@@ -136,6 +127,13 @@ impl<'a> SstIndexApplierBuilder<'a> {
                     self.collect_comparison_expr(left, op, right)
                 }
                 Operator::RegexMatch => self.collect_regex_match(left, right),
+                _ => Ok(()),
+            },
+
+            Expr::ScalarFunction(f) => match &f.func_def {
+                ScalarFunctionDefinition::UDF(udf) if udf.name() == "matches" => {
+                    self.collect_fulltext_match(&f.args[0], &f.args[1])
+                }
                 _ => Ok(()),
             },
 
@@ -171,6 +169,27 @@ impl<'a> SstIndexApplierBuilder<'a> {
         }
 
         if column.semantic_type != SemanticType::Tag {
+            return Ok(None);
+        }
+
+        Ok(Some((
+            column.column_id,
+            column.column_schema.data_type.clone(),
+        )))
+    }
+
+    fn column_id_and_type(
+        &self,
+        column_name: &str,
+    ) -> Result<Option<(ColumnId, ConcreteDataType)>> {
+        let column = self
+            .metadata
+            .column_by_name(column_name)
+            .context(ColumnNotFoundSnafu {
+                column: column_name,
+            })?;
+
+        if self.ignore_column_ids.contains(&column.column_id) {
             return Ok(None);
         }
 

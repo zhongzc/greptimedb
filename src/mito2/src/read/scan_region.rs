@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use common_recordbatch::SendableRecordBatchStream;
-use common_telemetry::{debug, error, info, warn};
+use common_telemetry::{debug, error, warn};
 use common_time::range::TimestampRange;
 use store_api::region_engine::{RegionScannerRef, SinglePartitionScanner};
 use store_api::storage::ScanRequest;

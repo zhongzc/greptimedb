@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use common_datasource::file_format::parquet::BufferedWriter;
-use common_telemetry::debug;
+use common_telemetry::{debug, info};
 use common_time::Timestamp;
 use futures::TryFutureExt;
 use object_store::ObjectStore;
@@ -71,6 +71,9 @@ impl ParquetWriter {
         mut source: Source,
         opts: &WriteOptions,
     ) -> Result<Option<SstInfo>> {
+        let start = std::time::Instant::now();
+        info!("Start writing SST: {:?}", self.file_path);
+
         let json = self.metadata.to_json().context(InvalidMetadataSnafu)?;
         let key_value_meta = KeyValue::new(PARQUET_METADATA_KEY.to_string(), json);
 
@@ -130,6 +133,16 @@ impl ParquetWriter {
 
         // convert FileMetaData to ParquetMetaData
         let parquet_metadata = parse_parquet_metadata(file_meta)?;
+
+        info!(
+            "Finish writing SST: {:?}, rows: {}, time range: {:?}, file size: {}, index size: {}, elapsed: {:?}",
+            self.file_path,
+            stats.num_rows,
+            time_range,
+            file_size,
+            index_file_size,
+            start.elapsed()
+        );
 
         // object_store.write will make sure all bytes are written or an error is raised.
         Ok(Some(SstInfo {

@@ -26,6 +26,8 @@ use index::inverted_index::create::sort::external_sort::ExternalSorter;
 use index::inverted_index::create::sort_create::SortIndexCreator;
 use index::inverted_index::create::InvertedIndexCreator;
 use index::inverted_index::format::writer::InvertedIndexBlobWriter;
+use index::inverted_index::tokenizer::simple::SimpleTokenizer;
+use index::inverted_index::tokenizer::Tokenizer;
 use object_store::ObjectStore;
 use puffin::file_format::writer::{Blob, PuffinAsyncWriter, PuffinFileWriter};
 use snafu::{ensure, ResultExt};
@@ -253,7 +255,11 @@ impl SstIndexCreator {
                 for i in 0..len {
                     let value = log_values.data.get_ref(i);
                     if let ValueRef::String(s) = value {
-                        let tokens = s.split(' ').map(|s| s.as_bytes()).collect::<Vec<_>>();
+                        let tokens = SimpleTokenizer::default().tokenize(s);
+                        let tokens = tokens
+                            .iter()
+                            .map(|token| token.as_bytes())
+                            .collect::<Vec<_>>();
                         self.index_creator
                             .push_values_with_name(&log_column_id.to_string(), &tokens)
                             .await

@@ -27,6 +27,8 @@ pub enum Predicate {
 
     /// Predicate for matching values against a regex pattern.
     RegexMatch(RegexMatchPredicate),
+
+    FullTextMatch(FullTextMatchPredicate),
 }
 
 /// `InListPredicate` contains a list of acceptable values. A value needs to match at least
@@ -70,4 +72,9 @@ pub struct RangePredicate {
 pub struct RegexMatchPredicate {
     /// The regex pattern.
     pub pattern: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullTextMatchPredicate {
+    pub query: String,
 }

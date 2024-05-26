@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod fulltext_match_apply;
 mod intersection_apply;
 mod keys_apply;
 
+pub use fulltext_match_apply::FullTextMatchApplier;
 pub use intersection_apply::IntersectionFstApplier;
 pub use keys_apply::KeysFstApplier;
 

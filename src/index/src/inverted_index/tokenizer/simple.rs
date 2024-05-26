@@ -12,12 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod create;
-pub mod error;
-pub mod format;
-pub mod search;
-pub mod tokenizer;
+use super::Tokenizer;
 
-pub type FstMap = fst::Map<Vec<u8>>;
-pub type Bytes = Vec<u8>;
-pub type BytesRef<'a> = &'a [u8];
+#[derive(Debug, Default)]
+pub struct SimpleTokenizer;
+
+impl Tokenizer for SimpleTokenizer {
+    fn tokenize(&self, text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase())
+            .collect()
+    }
+}

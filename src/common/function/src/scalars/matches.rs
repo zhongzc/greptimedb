@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use common_query::error::Result;
 use common_query::prelude::{Signature, Volatility};
+use common_telemetry::info;
 use datatypes::prelude::ConcreteDataType;
 use datatypes::vectors::{BooleanVector, VectorRef};
 
@@ -55,7 +56,26 @@ impl Function for MatchesFunction {
     }
 
     fn eval(&self, _func_ctx: FunctionContext, columns: &[VectorRef]) -> Result<VectorRef> {
-        let num_rows = columns[1].len();
-        Ok(Arc::new(BooleanVector::from(vec![true; num_rows])))
+        let query = columns[1].get(0).as_string().unwrap();
+        let tokens = query.split_whitespace().collect::<Vec<_>>();
+
+        info!("query: {:?} {:?}, tokens: {:?}", &columns[1], query, tokens);
+
+        let log = &columns[0];
+        let mut matches = vec![];
+        for i in 0..log.len() {
+            let log = log.get(i).as_string().unwrap();
+            let mut found = false;
+            for token in &tokens {
+                if log.contains(token) {
+                    found = true;
+                    break;
+                }
+            }
+            matches.push(found);
+        }
+
+        // info!("matches function eval: {:?}", columns);
+        Ok(Arc::new(BooleanVector::from(matches)))
     }
 }

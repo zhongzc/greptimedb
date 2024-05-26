@@ -16,12 +16,13 @@ use std::mem::size_of;
 
 use async_trait::async_trait;
 use common_base::BitVec;
+use common_telemetry::info;
 use greptime_proto::v1::index::InvertedIndexMetas;
 
 use crate::inverted_index::error::{IndexNotFoundSnafu, Result};
 use crate::inverted_index::format::reader::InvertedIndexReader;
 use crate::inverted_index::search::fst_apply::{
-    FstApplier, IntersectionFstApplier, KeysFstApplier,
+    FstApplier, FullTextMatchApplier, IntersectionFstApplier, KeysFstApplier,
 };
 use crate::inverted_index::search::fst_values_mapper::FstValuesMapper;
 use crate::inverted_index::search::index_apply::{
@@ -86,6 +87,9 @@ impl IndexApplier for PredicatesIndexApplier {
         }
 
         output.matched_segment_ids = bitmap;
+
+        info!("PredicatesIndexApplier: {:?}", output.matched_segment_ids);
+
         Ok(output)
     }
 
@@ -104,6 +108,7 @@ impl PredicatesIndexApplier {
     /// Constructs an instance of `PredicatesIndexApplier` based on a list of tag predicates.
     /// Chooses an appropriate `FstApplier` for each index name based on the nature of its predicates.
     pub fn try_from(mut predicates: Vec<(IndexName, Vec<Predicate>)>) -> Result<Self> {
+        info!("PredicatesIndexApplier: {:?}", predicates);
         let mut fst_appliers = Vec::with_capacity(predicates.len());
 
         // InList predicates are applied first to benefit from higher selectivity.
@@ -121,6 +126,16 @@ impl PredicatesIndexApplier {
             if predicates.is_empty() {
                 continue;
             }
+            if predicates
+                .iter()
+                .any(|p| matches!(p, Predicate::FullTextMatch(_)))
+            {
+                info!("FullTextMatchApplier: {:?}", predicates);
+                let fst_applier = Box::new(FullTextMatchApplier::try_from(predicates)?) as _;
+                fst_appliers.push((tag_name, fst_applier));
+                continue;
+            }
+
             let fst_applier = Box::new(IntersectionFstApplier::try_from(predicates)?) as _;
             fst_appliers.push((tag_name, fst_applier));
         }

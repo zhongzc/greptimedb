@@ -166,6 +166,10 @@ impl IntersectionFstApplier {
                 Predicate::InList(_) => {
                     return IntersectionApplierWithInListSnafu.fail();
                 }
+                Predicate::FullTextMatch(_) => {
+                    // Match predicates are handled by `MatchApplier`.
+                    panic!("MatchPredicate should not be handled by IntersectionFstApplier")
+                }
             }
         }
 
