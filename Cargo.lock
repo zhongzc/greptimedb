@@ -4742,10 +4742,12 @@ dependencies = [
  "rand",
  "regex",
  "regex-automata 0.4.6",
+ "roaring",
  "snafu 0.8.2",
  "tempfile",
  "tokio",
  "tokio-util",
+ "zstd 0.13.1",
 ]
 
 [[package]]
@@ -8398,6 +8400,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "roaring"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b26f4c25a604fcb3a1bcd96dd6ba37c93840de95de8198d94c0d571a74a804d1"
+dependencies = [
+ "bytemuck",
+ "byteorder",
 ]
 
 [[package]]

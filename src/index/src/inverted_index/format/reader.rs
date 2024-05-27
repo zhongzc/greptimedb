@@ -18,6 +18,7 @@ mod footer;
 use async_trait::async_trait;
 use common_base::BitVec;
 use greptime_proto::v1::index::{InvertedIndexMeta, InvertedIndexMetas};
+use roaring::RoaringBitmap;
 
 use crate::inverted_index::error::Result;
 pub use crate::inverted_index::format::reader::blob::InvertedIndexBlobReader;
@@ -39,5 +40,5 @@ pub trait InvertedIndexReader: Send {
         meta: &InvertedIndexMeta,
         relative_offset: u32,
         size: u32,
-    ) -> Result<BitVec>;
+    ) -> Result<RoaringBitmap>;
 }

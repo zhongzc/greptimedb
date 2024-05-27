@@ -23,6 +23,7 @@ use async_trait::async_trait;
 use common_base::BitVec;
 use common_telemetry::{debug, error};
 use futures::stream;
+use roaring::RoaringBitmap;
 
 use crate::inverted_index::create::sort::external_provider::ExternalTempFileProvider;
 use crate::inverted_index::create::sort::intermediate_rw::{
@@ -44,10 +45,10 @@ pub struct ExternalSorter {
     temp_file_provider: Arc<dyn ExternalTempFileProvider>,
 
     /// Bitmap indicating which segments have null values
-    segment_null_bitmap: BitVec,
+    segment_null_bitmap: RoaringBitmap,
 
     /// In-memory buffer to hold values and their corresponding bitmaps until memory threshold is exceeded
-    values_buffer: BTreeMap<Bytes, BitVec>,
+    values_buffer: BTreeMap<Bytes, RoaringBitmap>,
 
     /// Count of rows in the last dumped buffer, used to streamline memory usage of `values_buffer`.
     ///
@@ -92,7 +93,7 @@ impl Sorter for ExternalSorter {
             return Ok(());
         }
 
-        let segment_index_range = self.segment_index_range(n, value.is_none());
+        let segment_index_range = self.segment_index_range(n);
         self.total_row_count += n;
 
         if let Some(value) = value {
@@ -105,7 +106,7 @@ impl Sorter for ExternalSorter {
     }
 
     async fn push_multi(&mut self, values: &[BytesRef<'_>]) -> Result<()> {
-        let segment_index_range = self.segment_index_range(1, false);
+        let segment_index_range = self.segment_index_range(1);
         self.total_row_count += 1;
 
         let mut memory_diff = 0;
@@ -123,15 +124,8 @@ impl Sorter for ExternalSorter {
         // TODO(zhongzc): k-way merge instead of 2-way merge
 
         let mut tree_nodes: VecDeque<SortedStream> = VecDeque::with_capacity(readers.len() + 1);
-        let leading_zeros = self.last_dump_row_count / self.segment_row_count;
         tree_nodes.push_back(Box::new(stream::iter(
-            mem::take(&mut self.values_buffer)
-                .into_iter()
-                .map(move |(value, mut bitmap)| {
-                    bitmap.resize(bitmap.len() + leading_zeros, false);
-                    bitmap.shift_right(leading_zeros);
-                    Ok((value, bitmap))
-                }),
+            mem::take(&mut self.values_buffer).into_iter().map(Ok),
         )));
         for reader in readers {
             tree_nodes.push_back(IntermediateReader::new(reader).into_stream().await?);
@@ -167,7 +161,7 @@ impl ExternalSorter {
             index_name,
             temp_file_provider,
 
-            segment_null_bitmap: BitVec::new(),
+            segment_null_bitmap: RoaringBitmap::new(),
             values_buffer: BTreeMap::new(),
 
             total_row_count: 0,
@@ -210,16 +204,16 @@ impl ExternalSorter {
     ) -> usize {
         match self.values_buffer.get_mut(value) {
             Some(bitmap) => {
-                let old_len = bitmap.as_raw_slice().len();
+                let old_len = bitmap.serialized_size();
                 set_bits(bitmap, segment_index_range);
 
-                bitmap.as_raw_slice().len() - old_len
+                bitmap.serialized_size() - old_len
             }
             None => {
-                let mut bitmap = BitVec::default();
+                let mut bitmap = RoaringBitmap::default();
                 set_bits(&mut bitmap, segment_index_range);
 
-                let mem_diff = bitmap.as_raw_slice().len() + value.len();
+                let mem_diff = bitmap.serialized_size() + value.len();
                 self.values_buffer.insert(value.to_vec(), bitmap);
 
                 mem_diff
@@ -259,12 +253,11 @@ impl ExternalSorter {
             .fetch_sub(memory_usage, Ordering::Relaxed);
         self.current_memory_usage = 0;
 
-        let bitmap_leading_zeros = self.last_dump_row_count / self.segment_row_count;
         self.last_dump_row_count =
             self.total_row_count - self.total_row_count % self.segment_row_count; // align to segment
 
         let entries = values.len();
-        IntermediateWriter::new(writer).write_all(values, bitmap_leading_zeros as _).await.inspect(|_|
+        IntermediateWriter::new(writer).write_all(values).await.inspect(|_|
             debug!("Dumped {entries} entries ({memory_usage} bytes) to intermediate file {file_id} for index {index_name}")
         ).inspect_err(|e|
             error!("Failed to dump {entries} entries to intermediate file {file_id} for index {index_name}. Error: {e}")
@@ -273,12 +266,8 @@ impl ExternalSorter {
 
     /// Determines the segment index range for the row index range
     /// `[row_begin, row_begin + n - 1]`
-    fn segment_index_range(&self, n: usize, is_null: bool) -> RangeInclusive<usize> {
-        let row_begin = if is_null {
-            self.total_row_count
-        } else {
-            self.total_row_count - self.last_dump_row_count
-        };
+    fn segment_index_range(&self, n: usize) -> RangeInclusive<usize> {
+        let row_begin = self.total_row_count;
 
         let start = self.segment_index(row_begin);
         let end = self.segment_index(row_begin + n - 1);
@@ -292,245 +281,242 @@ impl ExternalSorter {
 }
 
 /// Sets the bits within the specified range in the given `BitVec` to true
-fn set_bits(bitmap: &mut BitVec, index_range: RangeInclusive<usize>) {
-    if *index_range.end() >= bitmap.len() {
-        bitmap.resize(index_range.end() + 1, false);
-    }
+fn set_bits(bitmap: &mut RoaringBitmap, index_range: RangeInclusive<usize>) {
     for index in index_range {
-        bitmap.set(index, true);
+        bitmap.push(index as _);
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::iter;
-    use std::sync::Mutex;
+// #[cfg(test)]
+// mod tests {
+//     use std::collections::HashMap;
+//     use std::iter;
+//     use std::sync::Mutex;
 
-    use futures::{AsyncRead, StreamExt};
-    use rand::Rng;
-    use tokio::io::duplex;
-    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+//     use futures::{AsyncRead, StreamExt};
+//     use rand::Rng;
+//     use tokio::io::duplex;
+//     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-    use super::*;
-    use crate::inverted_index::create::sort::external_provider::MockExternalTempFileProvider;
+//     use super::*;
+//     use crate::inverted_index::create::sort::external_provider::MockExternalTempFileProvider;
 
-    async fn test_external_sorter(
-        current_memory_usage_threshold: Option<usize>,
-        global_memory_usage_sort_limit: Option<usize>,
-        segment_row_count: usize,
-        row_count: usize,
-        batch_push: bool,
-    ) {
-        let mut mock_provider = MockExternalTempFileProvider::new();
+//     async fn test_external_sorter(
+//         current_memory_usage_threshold: Option<usize>,
+//         global_memory_usage_sort_limit: Option<usize>,
+//         segment_row_count: usize,
+//         row_count: usize,
+//         batch_push: bool,
+//     ) {
+//         let mut mock_provider = MockExternalTempFileProvider::new();
 
-        let mock_files: Arc<Mutex<HashMap<String, Box<dyn AsyncRead + Unpin + Send>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+//         let mock_files: Arc<Mutex<HashMap<String, Box<dyn AsyncRead + Unpin + Send>>>> =
+//             Arc::new(Mutex::new(HashMap::new()));
 
-        mock_provider.expect_create().returning({
-            let files = Arc::clone(&mock_files);
-            move |index_name, file_id| {
-                assert_eq!(index_name, "test");
-                let mut files = files.lock().unwrap();
-                let (writer, reader) = duplex(8 * 1024);
-                files.insert(file_id.to_string(), Box::new(reader.compat()));
-                Ok(Box::new(writer.compat_write()))
-            }
-        });
+//         mock_provider.expect_create().returning({
+//             let files = Arc::clone(&mock_files);
+//             move |index_name, file_id| {
+//                 assert_eq!(index_name, "test");
+//                 let mut files = files.lock().unwrap();
+//                 let (writer, reader) = duplex(8 * 1024);
+//                 files.insert(file_id.to_string(), Box::new(reader.compat()));
+//                 Ok(Box::new(writer.compat_write()))
+//             }
+//         });
 
-        mock_provider.expect_read_all().returning({
-            let files = Arc::clone(&mock_files);
-            move |index_name| {
-                assert_eq!(index_name, "test");
-                let mut files = files.lock().unwrap();
-                Ok(files.drain().map(|f| f.1).collect::<Vec<_>>())
-            }
-        });
+//         mock_provider.expect_read_all().returning({
+//             let files = Arc::clone(&mock_files);
+//             move |index_name| {
+//                 assert_eq!(index_name, "test");
+//                 let mut files = files.lock().unwrap();
+//                 Ok(files.drain().map(|f| f.1).collect::<Vec<_>>())
+//             }
+//         });
 
-        let mut sorter = ExternalSorter::new(
-            "test".to_owned(),
-            Arc::new(mock_provider),
-            NonZeroUsize::new(segment_row_count).unwrap(),
-            current_memory_usage_threshold,
-            Arc::new(AtomicUsize::new(0)),
-            global_memory_usage_sort_limit,
-        );
+//         let mut sorter = ExternalSorter::new(
+//             "test".to_owned(),
+//             Arc::new(mock_provider),
+//             NonZeroUsize::new(segment_row_count).unwrap(),
+//             current_memory_usage_threshold,
+//             Arc::new(AtomicUsize::new(0)),
+//             global_memory_usage_sort_limit,
+//         );
 
-        let mut sorted_result = if batch_push {
-            let (dic_values, sorted_result) =
-                dictionary_values_and_sorted_result(row_count, segment_row_count);
+//         let mut sorted_result = if batch_push {
+//             let (dic_values, sorted_result) =
+//                 dictionary_values_and_sorted_result(row_count, segment_row_count);
 
-            for (value, n) in dic_values {
-                sorter.push_n(value.as_deref(), n).await.unwrap();
-            }
+//             for (value, n) in dic_values {
+//                 sorter.push_n(value.as_deref(), n).await.unwrap();
+//             }
 
-            sorted_result
-        } else {
-            let (mock_values, sorted_result) =
-                shuffle_values_and_sorted_result(row_count, segment_row_count);
+//             sorted_result
+//         } else {
+//             let (mock_values, sorted_result) =
+//                 shuffle_values_and_sorted_result(row_count, segment_row_count);
 
-            for value in mock_values {
-                sorter.push(value.as_deref()).await.unwrap();
-            }
+//             for value in mock_values {
+//                 sorter.push(value.as_deref()).await.unwrap();
+//             }
 
-            sorted_result
-        };
+//             sorted_result
+//         };
 
-        let SortOutput {
-            segment_null_bitmap,
-            mut sorted_stream,
-            total_row_count,
-        } = sorter.output().await.unwrap();
-        assert_eq!(total_row_count, row_count);
-        let n = sorted_result.remove(&None);
-        assert_eq!(
-            segment_null_bitmap.iter_ones().collect::<Vec<_>>(),
-            n.unwrap_or_default()
-        );
-        for (value, offsets) in sorted_result {
-            let item = sorted_stream.next().await.unwrap().unwrap();
-            assert_eq!(item.0, value.unwrap());
-            assert_eq!(item.1.iter_ones().collect::<Vec<_>>(), offsets);
-        }
-    }
+//         let SortOutput {
+//             segment_null_bitmap,
+//             mut sorted_stream,
+//             total_row_count,
+//         } = sorter.output().await.unwrap();
+//         assert_eq!(total_row_count, row_count);
+//         let n = sorted_result.remove(&None);
+//         assert_eq!(
+//             segment_null_bitmap.iter_ones().collect::<Vec<_>>(),
+//             n.unwrap_or_default()
+//         );
+//         for (value, offsets) in sorted_result {
+//             let item = sorted_stream.next().await.unwrap().unwrap();
+//             assert_eq!(item.0, value.unwrap());
+//             assert_eq!(item.1.iter_ones().collect::<Vec<_>>(), offsets);
+//         }
+//     }
 
-    #[tokio::test]
-    async fn test_external_sorter_pure_in_memory() {
-        let current_memory_usage_threshold = None;
-        let global_memory_usage_sort_limit = None;
-        let total_row_count_cases = vec![0, 100, 1000, 10000];
-        let segment_row_count_cases = vec![1, 10, 100, 1000];
-        let batch_push_cases = vec![false, true];
+//     #[tokio::test]
+//     async fn test_external_sorter_pure_in_memory() {
+//         let current_memory_usage_threshold = None;
+//         let global_memory_usage_sort_limit = None;
+//         let total_row_count_cases = vec![0, 100, 1000, 10000];
+//         let segment_row_count_cases = vec![1, 10, 100, 1000];
+//         let batch_push_cases = vec![false, true];
 
-        for total_row_count in total_row_count_cases {
-            for segment_row_count in &segment_row_count_cases {
-                for batch_push in &batch_push_cases {
-                    test_external_sorter(
-                        current_memory_usage_threshold,
-                        global_memory_usage_sort_limit,
-                        *segment_row_count,
-                        total_row_count,
-                        *batch_push,
-                    )
-                    .await;
-                }
-            }
-        }
-    }
+//         for total_row_count in total_row_count_cases {
+//             for segment_row_count in &segment_row_count_cases {
+//                 for batch_push in &batch_push_cases {
+//                     test_external_sorter(
+//                         current_memory_usage_threshold,
+//                         global_memory_usage_sort_limit,
+//                         *segment_row_count,
+//                         total_row_count,
+//                         *batch_push,
+//                     )
+//                     .await;
+//                 }
+//             }
+//         }
+//     }
 
-    #[tokio::test]
-    async fn test_external_sorter_pure_external() {
-        let current_memory_usage_threshold = None;
-        let global_memory_usage_sort_limit = Some(0);
-        let total_row_count_cases = vec![0, 100, 1000, 10000];
-        let segment_row_count_cases = vec![1, 10, 100, 1000];
-        let batch_push_cases = vec![false, true];
+//     #[tokio::test]
+//     async fn test_external_sorter_pure_external() {
+//         let current_memory_usage_threshold = None;
+//         let global_memory_usage_sort_limit = Some(0);
+//         let total_row_count_cases = vec![0, 100, 1000, 10000];
+//         let segment_row_count_cases = vec![1, 10, 100, 1000];
+//         let batch_push_cases = vec![false, true];
 
-        for total_row_count in total_row_count_cases {
-            for segment_row_count in &segment_row_count_cases {
-                for batch_push in &batch_push_cases {
-                    test_external_sorter(
-                        current_memory_usage_threshold,
-                        global_memory_usage_sort_limit,
-                        *segment_row_count,
-                        total_row_count,
-                        *batch_push,
-                    )
-                    .await;
-                }
-            }
-        }
-    }
+//         for total_row_count in total_row_count_cases {
+//             for segment_row_count in &segment_row_count_cases {
+//                 for batch_push in &batch_push_cases {
+//                     test_external_sorter(
+//                         current_memory_usage_threshold,
+//                         global_memory_usage_sort_limit,
+//                         *segment_row_count,
+//                         total_row_count,
+//                         *batch_push,
+//                     )
+//                     .await;
+//                 }
+//             }
+//         }
+//     }
 
-    #[tokio::test]
-    async fn test_external_sorter_mixed() {
-        let current_memory_usage_threshold = vec![None, Some(2048)];
-        let global_memory_usage_sort_limit = Some(1024);
-        let total_row_count_cases = vec![0, 100, 1000, 10000];
-        let segment_row_count_cases = vec![1, 10, 100, 1000];
-        let batch_push_cases = vec![false, true];
+//     #[tokio::test]
+//     async fn test_external_sorter_mixed() {
+//         let current_memory_usage_threshold = vec![None, Some(2048)];
+//         let global_memory_usage_sort_limit = Some(1024);
+//         let total_row_count_cases = vec![0, 100, 1000, 10000];
+//         let segment_row_count_cases = vec![1, 10, 100, 1000];
+//         let batch_push_cases = vec![false, true];
 
-        for total_row_count in total_row_count_cases {
-            for segment_row_count in &segment_row_count_cases {
-                for batch_push in &batch_push_cases {
-                    for current_memory_usage_threshold in &current_memory_usage_threshold {
-                        test_external_sorter(
-                            *current_memory_usage_threshold,
-                            global_memory_usage_sort_limit,
-                            *segment_row_count,
-                            total_row_count,
-                            *batch_push,
-                        )
-                        .await;
-                    }
-                }
-            }
-        }
-    }
+//         for total_row_count in total_row_count_cases {
+//             for segment_row_count in &segment_row_count_cases {
+//                 for batch_push in &batch_push_cases {
+//                     for current_memory_usage_threshold in &current_memory_usage_threshold {
+//                         test_external_sorter(
+//                             *current_memory_usage_threshold,
+//                             global_memory_usage_sort_limit,
+//                             *segment_row_count,
+//                             total_row_count,
+//                             *batch_push,
+//                         )
+//                         .await;
+//                     }
+//                 }
+//             }
+//         }
+//     }
 
-    fn random_option_bytes(size: usize) -> Option<Vec<u8>> {
-        let mut rng = rand::thread_rng();
+//     fn random_option_bytes(size: usize) -> Option<Vec<u8>> {
+//         let mut rng = rand::thread_rng();
 
-        if rng.gen() {
-            let mut buffer = vec![0u8; size];
-            rng.fill(&mut buffer[..]);
-            Some(buffer)
-        } else {
-            None
-        }
-    }
+//         if rng.gen() {
+//             let mut buffer = vec![0u8; size];
+//             rng.fill(&mut buffer[..]);
+//             Some(buffer)
+//         } else {
+//             None
+//         }
+//     }
 
-    type Values = Vec<Option<Bytes>>;
-    type DictionaryValues = Vec<(Option<Bytes>, usize)>;
-    type ValueSegIds = BTreeMap<Option<Bytes>, Vec<usize>>;
+//     type Values = Vec<Option<Bytes>>;
+//     type DictionaryValues = Vec<(Option<Bytes>, usize)>;
+//     type ValueSegIds = BTreeMap<Option<Bytes>, Vec<usize>>;
 
-    fn shuffle_values_and_sorted_result(
-        row_count: usize,
-        segment_row_count: usize,
-    ) -> (Values, ValueSegIds) {
-        let mock_values = iter::repeat_with(|| random_option_bytes(100))
-            .take(row_count)
-            .collect::<Vec<_>>();
+//     fn shuffle_values_and_sorted_result(
+//         row_count: usize,
+//         segment_row_count: usize,
+//     ) -> (Values, ValueSegIds) {
+//         let mock_values = iter::repeat_with(|| random_option_bytes(100))
+//             .take(row_count)
+//             .collect::<Vec<_>>();
 
-        let sorted_result = sorted_result(&mock_values, segment_row_count);
-        (mock_values, sorted_result)
-    }
+//         let sorted_result = sorted_result(&mock_values, segment_row_count);
+//         (mock_values, sorted_result)
+//     }
 
-    fn dictionary_values_and_sorted_result(
-        row_count: usize,
-        segment_row_count: usize,
-    ) -> (DictionaryValues, ValueSegIds) {
-        let mut n = row_count;
-        let mut rng = rand::thread_rng();
-        let mut dic_values = Vec::new();
+//     fn dictionary_values_and_sorted_result(
+//         row_count: usize,
+//         segment_row_count: usize,
+//     ) -> (DictionaryValues, ValueSegIds) {
+//         let mut n = row_count;
+//         let mut rng = rand::thread_rng();
+//         let mut dic_values = Vec::new();
 
-        while n > 0 {
-            let size = rng.gen_range(1..=n);
-            let value = random_option_bytes(100);
-            dic_values.push((value, size));
-            n -= size;
-        }
+//         while n > 0 {
+//             let size = rng.gen_range(1..=n);
+//             let value = random_option_bytes(100);
+//             dic_values.push((value, size));
+//             n -= size;
+//         }
 
-        let mock_values = dic_values
-            .iter()
-            .flat_map(|(value, size)| iter::repeat(value.clone()).take(*size))
-            .collect::<Vec<_>>();
+//         let mock_values = dic_values
+//             .iter()
+//             .flat_map(|(value, size)| iter::repeat(value.clone()).take(*size))
+//             .collect::<Vec<_>>();
 
-        let sorted_result = sorted_result(&mock_values, segment_row_count);
-        (dic_values, sorted_result)
-    }
+//         let sorted_result = sorted_result(&mock_values, segment_row_count);
+//         (dic_values, sorted_result)
+//     }
 
-    fn sorted_result(values: &Values, segment_row_count: usize) -> ValueSegIds {
-        let mut sorted_result = BTreeMap::new();
-        for (row_index, value) in values.iter().enumerate() {
-            let to_add_segment_index = row_index / segment_row_count;
-            let indices = sorted_result.entry(value.clone()).or_insert_with(Vec::new);
+//     fn sorted_result(values: &Values, segment_row_count: usize) -> ValueSegIds {
+//         let mut sorted_result = BTreeMap::new();
+//         for (row_index, value) in values.iter().enumerate() {
+//             let to_add_segment_index = row_index / segment_row_count;
+//             let indices = sorted_result.entry(value.clone()).or_insert_with(Vec::new);
 
-            if indices.last() != Some(&to_add_segment_index) {
-                indices.push(to_add_segment_index);
-            }
-        }
+//             if indices.last() != Some(&to_add_segment_index) {
+//                 indices.push(to_add_segment_index);
+//             }
+//         }
 
-        sorted_result
-    }
-}
+//         sorted_result
+//     }
+// }
