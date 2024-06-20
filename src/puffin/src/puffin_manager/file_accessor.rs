@@ -12,15 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_imports)]
-#![allow(dead_code)]
+use std::sync::Arc;
 
-pub mod blob_metadata;
-pub mod error;
-pub mod file_format;
-pub mod file_metadata;
-pub mod partial_reader;
-pub mod puffin_manager;
+use async_trait::async_trait;
+use futures::{AsyncRead, AsyncSeek, AsyncWrite};
 
-#[cfg(test)]
-mod tests;
+use crate::error::Result;
+
+#[async_trait]
+pub trait PuffinFileAccessor {
+    type Reader: AsyncRead + AsyncSeek;
+    type Writer: AsyncWrite;
+
+    async fn reader(&self, puffin_file_name: &str) -> Result<Self::Reader>;
+
+    /// TODO(must not exist)
+    async fn writer(&self, puffin_file_name: &str) -> Result<Self::Writer>;
+}
+
+pub type PuffinFileAccessorRef<R, W> =
+    Arc<dyn PuffinFileAccessor<Reader = R, Writer = W> + Send + Sync>;

@@ -18,7 +18,17 @@ pin-project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 snafu.workspace = true
-
-[dev-dependencies]
+async-walkdir = "2.0.0"
+lz4_flex = "0.11"
+uuid.workspace = true
+async-compression = "0.4.11"
 tokio.workspace = true
 tokio-util.workspace = true
+moka.workspace = true
+sha2 = "0.10.8"
+base64.workspace = true
+common-telemetry.workspace = true
+
+[dev-dependencies]
+common-test-util.workspace = true
+async-stream.workspace = true

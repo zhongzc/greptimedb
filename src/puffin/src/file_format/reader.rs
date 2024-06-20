@@ -26,10 +26,12 @@ use crate::file_metadata::FileMetadata;
 pub trait PuffinSyncReader<'a> {
     type Reader: std::io::Read + std::io::Seek;
 
-    /// fetch the FileMetadata
+    /// Fetches the FileMetadata.
     fn metadata(&'a mut self) -> Result<FileMetadata>;
 
-    /// read particular blob data based on given metadata
+    /// Reads particular blob data based on given metadata.
+    ///
+    /// It's the caller's responsibility to decompress the data if compression is used.
     fn blob_reader(&'a mut self, blob_metadata: &BlobMetadata) -> Result<Self::Reader>;
 }
 
@@ -38,9 +40,11 @@ pub trait PuffinSyncReader<'a> {
 pub trait PuffinAsyncReader<'a> {
     type Reader: futures::AsyncRead + futures::AsyncSeek;
 
-    /// fetch the FileMetadata
+    /// Fetches the FileMetadata.
     async fn metadata(&'a mut self) -> Result<FileMetadata>;
 
-    /// read particular blob data based on given metadata
+    /// Reads particular blob data based on given metadata.
+    ///
+    /// It's the caller's responsibility to decompress the data if compression is used.
     fn blob_reader(&'a mut self, blob_metadata: &BlobMetadata) -> Result<Self::Reader>;
 }

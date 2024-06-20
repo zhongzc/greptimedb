@@ -56,8 +56,56 @@ pub enum Error {
         location: Location,
     },
 
+    #[snafu(display("Failed to open"))]
+    Open {
+        #[snafu(source)]
+        error: IoError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to create"))]
+    Create {
+        #[snafu(source)]
+        error: IoError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to close"))]
     Close {
+        #[snafu(source)]
+        error: IoError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to copy"))]
+    Copy {
+        #[snafu(source)]
+        error: IoError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to rename"))]
+    Rename {
+        #[snafu(source)]
+        error: IoError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to read metadata"))]
+    Metadata {
+        #[snafu(source)]
+        error: IoError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to remove"))]
+    Remove {
         #[snafu(source)]
         error: IoError,
         #[snafu(implicit)]
@@ -78,17 +126,28 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Unsupported decompression: {}", decompression))]
-    UnsupportedDecompression {
-        decompression: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Failed to serialize json"))]
     SerializeJson {
         #[snafu(source)]
         error: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to compress lz4"))]
+    Lz4Compression {
+        #[snafu(source)]
+        error: std::io::Error,
+
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to decompress lz4"))]
+    Lz4Decompression {
+        #[snafu(source)]
+        error: serde_json::Error,
+
         #[snafu(implicit)]
         location: Location,
     },
@@ -141,6 +200,58 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Unsupported decompression: {codec}"))]
+    UnsupportedDecompression {
+        codec: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Unsupported compression: {codec}"))]
+    UnsupportedCompression {
+        codec: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Write to the same blob twice: {blob}"))]
+    DuplicateBlob {
+        blob: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Blob not found: {blob}"))]
+    BlobNotFound {
+        blob: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Blob index out of bound, index: {}, max index: {}", index, max_index))]
+    BlobIndexOutOfBound {
+        index: usize,
+        max_index: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("File key not match, expected: {}, actual: {}", expected, actual))]
+    FileKeyNotMatch {
+        expected: String,
+        actual: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Error while walking directory"))]
+    WalkDirError {
+        #[snafu(source)]
+        error: async_walkdir::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 impl ErrorExt for Error {
@@ -148,21 +259,38 @@ impl ErrorExt for Error {
         use Error::*;
         match self {
             Seek { .. }
+            | Rename { .. }
+            | Create { .. }
+            | Remove { .. }
+            | Open { .. }
             | Read { .. }
             | MagicNotMatched { .. }
             | DeserializeJson { .. }
             | Write { .. }
             | Flush { .. }
             | Close { .. }
+            | Copy { .. }
+            | Metadata { .. }
             | SerializeJson { .. }
             | BytesToInteger { .. }
             | ParseStageNotMatch { .. }
             | UnexpectedFooterPayloadSize { .. }
             | UnexpectedPuffinFileSize { .. }
             | InvalidBlobOffset { .. }
+            | Lz4Compression { .. }
+            | Lz4Decompression { .. }
+            | BlobIndexOutOfBound { .. }
+            | FileKeyNotMatch { .. }
+            | BlobNotFound { .. }
             | InvalidBlobAreaEnd { .. } => StatusCode::Unexpected,
 
-            UnsupportedDecompression { .. } => StatusCode::Unsupported,
+            UnsupportedDecompression { .. } | UnsupportedCompression { .. } => {
+                StatusCode::Unsupported
+            }
+
+            DuplicateBlob { .. } => StatusCode::InvalidArguments,
+
+            WalkDirError { .. } => StatusCode::Internal,
         }
     }
 

@@ -19,44 +19,53 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
+use crate::blob_metadata::CompressionCodec;
 use crate::error::Result;
 pub use crate::file_format::writer::file::PuffinFileWriter;
 
-/// Blob ready to be written
+/// Blob ready to be written.
 pub struct Blob<R> {
-    // TODO(zhongzc): ignore `input_fields`, `snapshot_id`, `sequence_number`
-    // and `compression_codec` for now to keep thing simple
-    /// The type of the blob
+    // TODO(zhongzc): ignore `input_fields`, `snapshot_id`, `sequence_number` for now to keep thing simple.
+    /// The type of the blob.
     pub blob_type: String,
 
-    /// The data of the blob
-    pub data: R,
+    /// The data of the blob.
+    pub compressed_data: R,
 
-    /// The properties of the blob
+    /// The codec used to compress the blob.
+    pub compression_codec: Option<CompressionCodec>,
+
+    /// The properties of the blob.
     pub properties: HashMap<String, String>,
 }
 
-/// The trait for writing Puffin files synchronously
+/// The trait for writing Puffin files synchronously.
 pub trait PuffinSyncWriter {
-    /// Set the properties of the Puffin file
+    /// Sets the properties of the Puffin file.
     fn set_properties(&mut self, properties: HashMap<String, String>);
 
-    /// Add a blob to the Puffin file
+    /// Sets whether the footer payload should be LZ4 compressed.
+    fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool);
+
+    /// Adds a blob to the Puffin file.
     fn add_blob<R: std::io::Read>(&mut self, blob: Blob<R>) -> Result<()>;
 
-    /// Finish writing the Puffin file, returns the number of bytes written
+    /// Finishes writing the Puffin file, returns the number of bytes written.
     fn finish(&mut self) -> Result<usize>;
 }
 
-/// The trait for writing Puffin files asynchronously
+/// The trait for writing Puffin files asynchronously.
 #[async_trait]
 pub trait PuffinAsyncWriter {
-    /// Set the properties of the Puffin file
+    /// Sets the properties of the Puffin file.
     fn set_properties(&mut self, properties: HashMap<String, String>);
 
-    /// Add a blob to the Puffin file
+    /// Sets whether the footer payload should be LZ4 compressed.
+    fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool);
+
+    /// Adds a blob to the Puffin file.
     async fn add_blob<R: futures::AsyncRead + Send>(&mut self, blob: Blob<R>) -> Result<()>;
 
-    /// Finish writing the Puffin file, returns the number of bytes written
+    /// Finishes writing the Puffin file, returns the number of bytes written.
     async fn finish(&mut self) -> Result<usize>;
 }

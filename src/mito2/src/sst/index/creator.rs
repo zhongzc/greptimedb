@@ -271,7 +271,8 @@ impl SstIndexCreator {
         let (tx, rx) = duplex(PIPE_BUFFER_SIZE_FOR_SENDING_BLOB);
         let blob = Blob {
             blob_type: INDEX_BLOB_TYPE.to_string(),
-            data: rx.compat(),
+            compressed_data: rx.compat(),
+            compression_codec: None,
             properties: HashMap::default(),
         };
         let mut index_writer = InvertedIndexBlobWriter::new(tx.compat_write());
