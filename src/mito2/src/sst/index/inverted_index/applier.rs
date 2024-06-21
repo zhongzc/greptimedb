@@ -36,8 +36,8 @@ use crate::metrics::{
     INDEX_PUFFIN_READ_OP_TOTAL, INDEX_PUFFIN_SEEK_OP_TOTAL,
 };
 use crate::sst::file::FileId;
+use crate::sst::index::inverted_index::INDEX_BLOB_TYPE;
 use crate::sst::index::store::InstrumentedStore;
-use crate::sst::index::INDEX_BLOB_TYPE;
 use crate::sst::location;
 
 /// The [`SstIndexApplier`] is responsible for applying predicates to the provided SST files

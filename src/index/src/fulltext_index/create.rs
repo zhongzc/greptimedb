@@ -12,7 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(iter_partition_in_place)]
+mod tantivy;
 
-pub mod inverted_index;
-pub mod fulltext_index;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::fulltext_index::error::Result;
+
+#[async_trait]
+pub trait FulltextIndexCreator {
+    async fn push_text(&mut self, text: &str) -> Result<()>;
+
+    async fn finish(&mut self) -> Result<()>;
+}

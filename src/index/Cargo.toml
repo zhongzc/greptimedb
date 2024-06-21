@@ -25,6 +25,9 @@ prost.workspace = true
 regex.workspace = true
 regex-automata.workspace = true
 snafu.workspace = true
+tantivy = { version = "0.22", features = ["zstd-compression"] }
+serde.workspace = true
+tantivy-jieba = "0.11.0"
 
 [dev-dependencies]
 rand.workspace = true

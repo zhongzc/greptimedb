@@ -582,6 +582,21 @@ pub enum Error {
         location: Location,
     },
 
+    #[snafu(display("Failed to finish create fulltext index"))]
+    FulltextFinish {
+        source: index::fulltext_index::error::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to cleanup fulltext index path"))]
+    FulltextCleanupPath {
+        #[snafu(source)]
+        error: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to read puffin metadata"))]
     PuffinReadMetadata {
         source: puffin::error::Error,
@@ -852,6 +867,9 @@ impl ErrorExt for Error {
             StaleLogEntry { .. } => StatusCode::Unexpected,
 
             FilterRecordBatch { source, .. } => source.status_code(),
+
+            FulltextFinish { source, .. } => source.status_code(),
+            FulltextCleanupPath { .. } => StatusCode::Unexpected,
 
             Upload { .. } => StatusCode::StorageUnavailable,
             BiError { .. } => StatusCode::Internal,

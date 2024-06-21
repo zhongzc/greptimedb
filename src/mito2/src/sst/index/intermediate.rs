@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::path::PathBuf;
+
 use common_telemetry::warn;
 use object_store::util::{self, normalize_dir};
-use store_api::storage::RegionId;
+use store_api::storage::{ColumnId, RegionId};
 use uuid::Uuid;
 
 use crate::access_layer::new_fs_object_store;
@@ -23,10 +25,12 @@ use crate::sst::file::FileId;
 use crate::sst::index::store::InstrumentedStore;
 
 const INTERMEDIATE_DIR: &str = "__intm";
+const FULLTEXT_TEMP_DIR: &str = "__fulltext";
 
 /// `IntermediateManager` provides store to access to intermediate files.
 #[derive(Clone)]
 pub struct IntermediateManager {
+    root_path: String,
     store: InstrumentedStore,
 }
 
@@ -34,15 +38,19 @@ impl IntermediateManager {
     /// Create a new `IntermediateManager` with the given root path.
     /// It will clean up all garbage intermediate files from previous runs.
     pub async fn init_fs(root_path: impl AsRef<str>) -> Result<Self> {
-        let store = new_fs_object_store(&normalize_dir(root_path.as_ref())).await?;
+        let root_path = normalize_dir(root_path.as_ref());
+        let store = new_fs_object_store(&root_path).await?;
         let store = InstrumentedStore::new(store);
 
         // Remove all garbage intermediate files from previous runs.
         if let Err(err) = store.remove_all(INTERMEDIATE_DIR).await {
             warn!(err; "Failed to remove garbage intermediate files");
         }
+        if let Err(err) = store.remove_all(FULLTEXT_TEMP_DIR).await {
+            warn!(err; "Failed to remove garbage fulltext directories");
+        }
 
-        Ok(Self { store })
+        Ok(Self { root_path, store })
     }
 
     /// Set the write buffer size for the store.
@@ -56,9 +64,14 @@ impl IntermediateManager {
         &self.store
     }
 
+    pub fn fulltext_tmpdir_builder(&self) -> FulltextTmpdirBuilder {
+        FulltextTmpdirBuilder::new(self.root_path.clone())
+    }
+
     #[cfg(test)]
     pub(crate) fn new(store: object_store::ObjectStore) -> Self {
         Self {
+            root_path: "/".to_string(),
             store: InstrumentedStore::new(store),
         }
     }
@@ -101,6 +114,35 @@ impl IntermediateLocation {
     /// `__intm/{region_id}/{sst_file_id}/{uuid}/{column_id}/{im_file_id}.im`
     pub fn file_path(&self, column_id: &str, im_file_id: &str) -> String {
         util::join_path(&self.column_path(column_id), &format!("{im_file_id}.im"))
+    }
+}
+
+pub struct FulltextTmpdirBuilder {
+    root_path: String,
+}
+
+impl FulltextTmpdirBuilder {
+    pub fn new(root_path: String) -> Self {
+        Self { root_path }
+    }
+
+    pub fn absolute_path(
+        &self,
+        region_id: &RegionId,
+        sst_file_id: &FileId,
+        column_id: &ColumnId,
+    ) -> PathBuf {
+        let uuid = Uuid::new_v4();
+        format!(
+            "{}{}/{}-{}-{}-{}",
+            self.root_path,
+            FULLTEXT_TEMP_DIR,
+            region_id.as_u64(),
+            sst_file_id,
+            column_id,
+            uuid
+        )
+        .into()
     }
 }
 

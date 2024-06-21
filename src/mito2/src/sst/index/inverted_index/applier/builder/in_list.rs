@@ -18,7 +18,7 @@ use datafusion_expr::expr::InList;
 use index::inverted_index::search::predicate::{InListPredicate, Predicate};
 
 use crate::error::Result;
-use crate::sst::index::applier::builder::SstIndexApplierBuilder;
+use crate::sst::index::inverted_index::applier::builder::SstIndexApplierBuilder;
 
 impl<'a> SstIndexApplierBuilder<'a> {
     /// Collects an in list expression in the form of `column IN (lit, lit, ...)`.
@@ -55,7 +55,7 @@ impl<'a> SstIndexApplierBuilder<'a> {
 mod tests {
     use super::*;
     use crate::error::Error;
-    use crate::sst::index::applier::builder::tests::{
+    use crate::sst::index::inverted_index::applier::builder::tests::{
         encoded_string, field_column, int64_lit, nonexistent_column, string_lit, tag_column,
         test_object_store, test_region_metadata,
     };

@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub(crate) mod applier;
-mod codec;
-pub(crate) mod creator;
+pub mod fulltext_index;
 pub(crate) mod intermediate;
+pub mod inverted_index;
 mod store;
 
 use std::num::NonZeroUsize;
 
 use common_telemetry::{debug, warn};
-use creator::SstIndexCreator;
 use object_store::ObjectStore;
 use store_api::metadata::RegionMetadataRef;
 use store_api::storage::RegionId;
@@ -31,8 +29,7 @@ use crate::read::Batch;
 use crate::region::options::IndexOptions;
 use crate::sst::file::FileId;
 use crate::sst::index::intermediate::IntermediateManager;
-
-const INDEX_BLOB_TYPE: &str = "greptime-inverted-index-v1";
+use crate::sst::index::inverted_index::creator::SstIndexCreator;
 
 /// The index creator that hides the error handling details.
 #[derive(Default)]

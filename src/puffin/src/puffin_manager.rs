@@ -16,6 +16,8 @@ mod cache_manager;
 mod cached_puffin_manager;
 mod file_accessor;
 
+pub use cached_puffin_manager::{CachedPuffinManager, CachedPuffinReader, CachedPuffinWriter};
+
 #[cfg(test)]
 mod tests;
 

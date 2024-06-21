@@ -41,12 +41,12 @@ use crate::metrics::{
 };
 use crate::read::Batch;
 use crate::sst::file::FileId;
-use crate::sst::index::codec::{ColumnId, IndexValueCodec, IndexValuesCodec};
-use crate::sst::index::creator::statistics::Statistics;
-use crate::sst::index::creator::temp_provider::TempFileProvider;
 use crate::sst::index::intermediate::{IntermediateLocation, IntermediateManager};
+use crate::sst::index::inverted_index::codec::{ColumnId, IndexValueCodec, IndexValuesCodec};
+use crate::sst::index::inverted_index::creator::statistics::Statistics;
+use crate::sst::index::inverted_index::creator::temp_provider::TempFileProvider;
+use crate::sst::index::inverted_index::INDEX_BLOB_TYPE;
 use crate::sst::index::store::InstrumentedStore;
-use crate::sst::index::INDEX_BLOB_TYPE;
 
 /// The minimum memory usage threshold for one column.
 const MIN_MEMORY_USAGE_THRESHOLD_PER_COLUMN: usize = 1024 * 1024; // 1MB
@@ -331,7 +331,7 @@ mod tests {
 
     use super::*;
     use crate::row_converter::{McmpRowCodec, RowCodec, SortField};
-    use crate::sst::index::applier::builder::SstIndexApplierBuilder;
+    use crate::sst::index::inverted_index::applier::builder::SstIndexApplierBuilder;
     use crate::sst::location;
 
     fn mock_object_store() -> ObjectStore {

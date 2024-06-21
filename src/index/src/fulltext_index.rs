@@ -12,7 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(iter_partition_in_place)]
+use serde::{Deserialize, Serialize};
 
-pub mod inverted_index;
-pub mod fulltext_index;
+pub mod create;
+pub mod error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct Config {
+    pub analyzer: Analyzer,
+    pub case_sensitive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Analyzer {
+    #[default]
+    English,
+
+    Chinese,
+}

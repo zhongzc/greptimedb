@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(iter_partition_in_place)]
+pub(crate) mod creator;
 
-pub mod inverted_index;
-pub mod fulltext_index;
+const INDEX_BLOB_TYPE: &str = "greptime-fulltext-index-v1";
