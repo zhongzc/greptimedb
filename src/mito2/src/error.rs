@@ -582,8 +582,8 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Failed to finish create fulltext index"))]
-    FulltextFinish {
+    #[snafu(display("Fulltext error"))]
+    FulltextError {
         source: index::fulltext_index::error::Error,
         #[snafu(implicit)]
         location: Location,
@@ -627,6 +627,13 @@ pub enum Error {
 
     #[snafu(display("Failed to add blob to puffin file"))]
     PuffinAddBlob {
+        source: puffin::error::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Puffin error"))]
+    PuffinError {
         source: puffin::error::Error,
         #[snafu(implicit)]
         location: Location,
@@ -861,14 +868,15 @@ impl ErrorExt for Error {
             PuffinReadMetadata { source, .. }
             | PuffinReadBlob { source, .. }
             | PuffinFinish { source, .. }
-            | PuffinAddBlob { source, .. } => source.status_code(),
+            | PuffinAddBlob { source, .. } 
+            | PuffinError { source, .. }=> source.status_code(),
             CleanDir { .. } => StatusCode::Unexpected,
             InvalidConfig { .. } => StatusCode::InvalidArguments,
             StaleLogEntry { .. } => StatusCode::Unexpected,
 
             FilterRecordBatch { source, .. } => source.status_code(),
 
-            FulltextFinish { source, .. } => source.status_code(),
+            FulltextError { source, .. } => source.status_code(),
             FulltextCleanupPath { .. } => StatusCode::Unexpected,
 
             Upload { .. } => StatusCode::StorageUnavailable,

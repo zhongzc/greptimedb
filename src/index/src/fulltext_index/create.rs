@@ -17,12 +17,15 @@ mod tantivy;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+pub use tantivy::TantivyFulltextIndexCreator;
 
 use crate::fulltext_index::error::Result;
 
 #[async_trait]
-pub trait FulltextIndexCreator {
+pub trait FulltextIndexCreator: Send {
     async fn push_text(&mut self, text: &str) -> Result<()>;
 
     async fn finish(&mut self) -> Result<()>;
+
+    fn memory_usage(&self) -> usize;
 }

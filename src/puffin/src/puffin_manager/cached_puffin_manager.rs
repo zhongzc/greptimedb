@@ -224,14 +224,14 @@ where
         key: &str,
         raw_data: impl AsyncRead + Send,
         options: Option<PutOptions>,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         ensure!(
             !self.blob_keys.contains(key),
             DuplicateBlobSnafu { blob: key }
         );
 
         let compression_codec = options.and_then(|opts| opts.data_compression);
-        match compression_codec {
+        let written_bytes = match compression_codec {
             Some(CompressionCodec::Lz4) => UnsupportedCompressionSnafu { codec: "lz4" }.fail()?,
             Some(CompressionCodec::Zstd) => {
                 let blob = Blob {
@@ -240,7 +240,7 @@ where
                     compression_codec,
                     properties: Default::default(),
                 };
-                self.puffin_file_writer.add_blob(blob).await?;
+                self.puffin_file_writer.add_blob(blob).await?
             }
             None => {
                 let blob = Blob {
@@ -249,12 +249,12 @@ where
                     compression_codec,
                     properties: Default::default(),
                 };
-                self.puffin_file_writer.add_blob(blob).await?;
+                self.puffin_file_writer.add_blob(blob).await?
             }
-        }
+        };
 
         self.blob_keys.insert(key.to_string());
-        Ok(())
+        Ok(written_bytes)
     }
 
     async fn put_dir(
@@ -262,7 +262,7 @@ where
         key: &str,
         dir_path: PathBuf,
         options: Option<PutOptions>,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         ensure!(
             !self.blob_keys.contains(key),
             DuplicateBlobSnafu { blob: key }
@@ -283,10 +283,11 @@ where
             }
         });
 
-        let mut size = 0;
+        let mut dir_size = 0;
+        let mut written_bytes = 0;
         while let Some(entry) = wd.next().await {
             let entry = entry.context(WalkDirSnafu)?;
-            size += entry.metadata().await.context(MetadataSnafu)?.len();
+            dir_size += entry.metadata().await.context(MetadataSnafu)?.len();
 
             let reader = tokio::fs::File::open(entry.path())
                 .await
@@ -303,7 +304,7 @@ where
                         compression_codec: compression_codec.clone(),
                         properties: Default::default(),
                     };
-                    self.puffin_file_writer.add_blob(blob).await?;
+                    written_bytes += self.puffin_file_writer.add_blob(blob).await?;
                 }
                 None => {
                     let blob = Blob {
@@ -312,7 +313,7 @@ where
                         compression_codec: compression_codec.clone(),
                         properties: Default::default(),
                     };
-                    self.puffin_file_writer.add_blob(blob).await?;
+                    written_bytes += self.puffin_file_writer.add_blob(blob).await?;
                 }
             }
 
@@ -340,13 +341,13 @@ where
             properties: Default::default(),
         };
 
-        self.puffin_file_writer.add_blob(dir_meta_blob).await?;
+        written_bytes += self.puffin_file_writer.add_blob(dir_meta_blob).await?;
         self.blob_keys.insert(key.to_string());
 
         self.cache_manager
-            .put_dir(&self.puffin_file_name, key, dir_path, size)
+            .put_dir(&self.puffin_file_name, key, dir_path, dir_size)
             .await?;
-        Ok(())
+        Ok(written_bytes)
     }
 
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool) {

@@ -96,4 +96,11 @@ impl FulltextIndexCreator for TantivyFulltextIndexCreator {
         }
         Ok(())
     }
+
+    fn memory_usage(&self) -> usize {
+        self.writer
+            .as_ref()
+            .map(|writer| writer.mem_usage())
+            .unwrap_or(0)
+    }
 }

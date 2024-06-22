@@ -15,7 +15,7 @@
 use std::any::Any;
 use std::io::Error as IoError;
 
-use common_error::ext::ErrorExt;
+use common_error::ext::{BoxedError, ErrorExt};
 use common_error::status_code::StatusCode;
 use common_macro::stack_trace_debug;
 use snafu::{Location, Snafu};
@@ -252,6 +252,14 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("External error"))]
+    External {
+        #[snafu(source)]
+        error: BoxedError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 impl ErrorExt for Error {
@@ -291,6 +299,8 @@ impl ErrorExt for Error {
             DuplicateBlob { .. } => StatusCode::InvalidArguments,
 
             WalkDirError { .. } => StatusCode::Internal,
+
+            External { error, .. } => error.status_code(),
         }
     }
 

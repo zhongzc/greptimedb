@@ -77,7 +77,7 @@ impl<W: io::Write> PuffinSyncWriter for PuffinFileWriter<W> {
         self.properties = properties;
     }
 
-    fn add_blob<R: io::Read>(&mut self, mut blob: Blob<R>) -> Result<()> {
+    fn add_blob<R: io::Read>(&mut self, mut blob: Blob<R>) -> Result<u64> {
         self.write_header_if_needed_sync()?;
 
         let size = io::copy(&mut blob.compressed_data, &mut self.writer).context(WriteSnafu)?;
@@ -91,7 +91,7 @@ impl<W: io::Write> PuffinSyncWriter for PuffinFileWriter<W> {
         self.blob_metadata.push(blob_metadata);
 
         self.written_bytes += size;
-        Ok(())
+        Ok(size)
     }
 
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool) {
@@ -113,7 +113,7 @@ impl<W: AsyncWrite + Unpin + Send> PuffinAsyncWriter for PuffinFileWriter<W> {
         self.properties = properties;
     }
 
-    async fn add_blob<R: AsyncRead + Send>(&mut self, blob: Blob<R>) -> Result<()> {
+    async fn add_blob<R: AsyncRead + Send>(&mut self, blob: Blob<R>) -> Result<u64> {
         self.write_header_if_needed_async().await?;
 
         let size = futures::io::copy(blob.compressed_data, &mut self.writer)
@@ -129,7 +129,7 @@ impl<W: AsyncWrite + Unpin + Send> PuffinAsyncWriter for PuffinFileWriter<W> {
         self.blob_metadata.push(blob_metadata);
 
         self.written_bytes += size;
-        Ok(())
+        Ok(size)
     }
 
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool) {

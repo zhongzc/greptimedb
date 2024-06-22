@@ -16,7 +16,9 @@ mod cache_manager;
 mod cached_puffin_manager;
 mod file_accessor;
 
+pub use cache_manager::MokaCacheManager;
 pub use cached_puffin_manager::{CachedPuffinManager, CachedPuffinReader, CachedPuffinWriter};
+pub use file_accessor::{PuffinFileAccessor, PuffinFileAccessorRef};
 
 #[cfg(test)]
 mod tests;
@@ -55,10 +57,14 @@ pub trait PuffinWriter {
         key: &str,
         raw_data: impl AsyncRead + Send,
         options: Option<PutOptions>,
-    ) -> Result<()>;
+    ) -> Result<u64>;
 
-    async fn put_dir(&mut self, key: &str, dir: PathBuf, options: Option<PutOptions>)
-        -> Result<()>;
+    async fn put_dir(
+        &mut self,
+        key: &str,
+        dir: PathBuf,
+        options: Option<PutOptions>,
+    ) -> Result<u64>;
 
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool);
 

@@ -47,8 +47,8 @@ pub trait PuffinSyncWriter {
     /// Sets whether the footer payload should be LZ4 compressed.
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool);
 
-    /// Adds a blob to the Puffin file.
-    fn add_blob<R: std::io::Read>(&mut self, blob: Blob<R>) -> Result<()>;
+    /// Adds a blob to the Puffin file. Returns the number of bytes written.
+    fn add_blob<R: std::io::Read>(&mut self, blob: Blob<R>) -> Result<u64>;
 
     /// Finishes writing the Puffin file, returns the number of bytes written.
     fn finish(&mut self) -> Result<usize>;
@@ -63,8 +63,8 @@ pub trait PuffinAsyncWriter {
     /// Sets whether the footer payload should be LZ4 compressed.
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool);
 
-    /// Adds a blob to the Puffin file.
-    async fn add_blob<R: futures::AsyncRead + Send>(&mut self, blob: Blob<R>) -> Result<()>;
+    /// Adds a blob to the Puffin file. Returns the number of bytes written.
+    async fn add_blob<R: futures::AsyncRead + Send>(&mut self, blob: Blob<R>) -> Result<u64>;
 
     /// Finishes writing the Puffin file, returns the number of bytes written.
     async fn finish(&mut self) -> Result<usize>;
