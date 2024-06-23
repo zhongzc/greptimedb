@@ -134,9 +134,7 @@ where
             }
         }
 
-        let index_size = self.indexer.finish().await;
-        let inverted_index_available = index_size.inverted_index.available;
-        let index_file_size = index_size.inverted_index.written_bytes;
+        let index_output = self.indexer.finish().await;
 
         if stats.num_rows == 0 {
             return Ok(None);
@@ -164,8 +162,7 @@ where
             file_size,
             num_rows: stats.num_rows,
             file_metadata: Some(Arc::new(parquet_metadata)),
-            inverted_index_available,
-            index_file_size,
+            index_output,
         }))
     }
 

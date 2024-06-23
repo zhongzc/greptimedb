@@ -23,7 +23,7 @@ use store_api::metadata::RegionMetadataRef;
 use store_api::storage::RegionId;
 use tokio::sync::mpsc;
 
-use crate::access_layer::{AccessLayerRef, SstWriteRequest};
+use crate::access_layer::{AccessLayerRef, BuildOn, SstWriteRequest};
 use crate::cache::CacheManagerRef;
 use crate::compaction::picker::CompactionTask;
 use crate::compaction::{build_sst_reader, CompactionOutput};
@@ -123,22 +123,6 @@ impl CompactionTaskImpl {
                 write_buffer_size: self.engine_config.sst_write_buffer_size,
                 ..Default::default()
             };
-            let create_inverted_index = self
-                .engine_config
-                .inverted_index
-                .create_on_compaction
-                .auto();
-            let mem_threshold_index_create = self
-                .engine_config
-                .inverted_index
-                .mem_threshold_on_create
-                .map(|m| m.as_bytes() as _);
-            let index_write_buffer_size = Some(
-                self.engine_config
-                    .inverted_index
-                    .write_buffer_size
-                    .as_bytes() as usize,
-            );
 
             let metadata = self.metadata.clone();
             let sst_layer = self.sst_layer.clone();
@@ -148,6 +132,9 @@ impl CompactionTaskImpl {
             let storage = self.storage.clone();
             let index_options = self.index_options.clone();
             let append_mode = self.append_mode;
+            let index_config = self.engine_config.index.clone();
+            let inverted_index_config = self.engine_config.inverted_index.clone();
+            let fulltext_index_config = self.engine_config.fulltext_index.clone();
             futs.push(async move {
                 let reader = build_sst_reader(
                     metadata.clone(),
@@ -162,15 +149,16 @@ impl CompactionTaskImpl {
                 let file_meta_opt = sst_layer
                     .write_sst(
                         SstWriteRequest {
+                            build_on: BuildOn::Compaction,
                             file_id,
                             metadata,
                             source: Source::Reader(reader),
                             cache_manager,
                             storage,
-                            create_inverted_index,
-                            mem_threshold_index_create,
-                            index_write_buffer_size,
                             index_options,
+                            index_config,
+                            inverted_index_config,
+                            fulltext_index_config,
                         },
                         &write_opts,
                     )
@@ -181,11 +169,17 @@ impl CompactionTaskImpl {
                         time_range: sst_info.time_range,
                         level: output.output_level,
                         file_size: sst_info.file_size,
-                        available_indexes: sst_info
-                            .inverted_index_available
-                            .then(|| SmallVec::from_iter([IndexType::InvertedIndex]))
-                            .unwrap_or_default(),
-                        index_file_size: sst_info.index_file_size,
+                        available_indexes: {
+                            let mut indexes = SmallVec::new();
+                            if sst_info.index_output.inverted_index.available {
+                                indexes.push(IndexType::InvertedIndex);
+                            }
+                            if sst_info.index_output.fulltext_index.available {
+                                indexes.push(IndexType::FulltextIndex);
+                            }
+                            indexes
+                        },
+                        index_file_size: sst_info.index_output.file_size,
                     });
                 Ok(file_meta_opt)
             });

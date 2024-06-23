@@ -68,6 +68,7 @@ use crate::manifest::manager::{RegionManifestManager, RegionManifestOptions};
 use crate::read::{Batch, BatchBuilder, BatchReader};
 use crate::sst::file_purger::{FilePurger, FilePurgerRef, PurgeRequest};
 use crate::sst::index::intermediate::IntermediateManager;
+use crate::sst::index::puffin_manager::PuffinManagerFactory;
 use crate::time_provider::{StdTimeProvider, TimeProviderRef};
 use crate::worker::WorkerGroup;
 
@@ -580,12 +581,21 @@ impl TestEnv {
         let intm_mgr = IntermediateManager::init_fs(join_dir(&data_home, "intm"))
             .await
             .unwrap();
-
-        let object_store_manager = self.get_object_store_manager().unwrap();
-        let write_cache =
-            WriteCache::new(local_store, object_store_manager, capacity, None, intm_mgr)
+        let puffin_mgr_fty =
+            PuffinManagerFactory::new(join_dir(&data_home, "puffin_cache").into(), u64::MAX, None)
                 .await
                 .unwrap();
+        let object_store_manager = self.get_object_store_manager().unwrap();
+        let write_cache = WriteCache::new(
+            local_store,
+            object_store_manager,
+            capacity,
+            None,
+            intm_mgr,
+            puffin_mgr_fty,
+        )
+        .await
+        .unwrap();
 
         Arc::new(write_cache)
     }

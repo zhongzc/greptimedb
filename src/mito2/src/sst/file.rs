@@ -116,6 +116,8 @@ pub struct FileMeta {
 pub enum IndexType {
     /// Inverted index.
     InvertedIndex,
+    /// Full-text index.
+    FulltextIndex,
 }
 
 impl FileMeta {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use async_trait::async_trait;
 use snafu::ResultExt;
@@ -22,12 +22,17 @@ use tantivy::tokenizer::{LowerCaser, SimpleTokenizer, TextAnalyzer, TokenizerMan
 use tantivy::{doc, Index, SingleSegmentIndexWriter};
 use tantivy_jieba::JiebaTokenizer;
 
-use super::FulltextIndexCreator;
+use crate::fulltext_index::create::FulltextIndexCreator;
 use crate::fulltext_index::error::{Result, TantivySnafu};
 use crate::fulltext_index::{Analyzer, Config};
 
 const TEXT_FIELD_NAME: &str = "greptime_fulltext_text";
 const ROW_ID_FIELD_NAME: &str = "greptime_fulltext_rowid";
+
+// Port from tantivy::indexer::index_writer::{MEMORY_BUDGET_NUM_BYTES_MIN, MEMORY_BUDGET_NUM_BYTES_MAX}
+const MARGIN_IN_BYTES: usize = 1_000_000;
+const MEMORY_BUDGET_NUM_BYTES_MIN: usize = ((MARGIN_IN_BYTES as u32) * 15u32) as usize;
+const MEMORY_BUDGET_NUM_BYTES_MAX: usize = u32::MAX as usize - MARGIN_IN_BYTES;
 
 pub struct TantivyFulltextIndexCreator {
     writer: Option<SingleSegmentIndexWriter>,
@@ -47,6 +52,14 @@ impl TantivyFulltextIndexCreator {
         let mut index = Index::create_in_dir(path, schema).context(TantivySnafu)?;
         index.settings_mut().docstore_compression = Compressor::Zstd(ZstdCompressor::default());
         index.set_tokenizers(Self::build_tokenizer(&config));
+
+        let memory_limit = if memory_limit < MEMORY_BUDGET_NUM_BYTES_MIN {
+            MEMORY_BUDGET_NUM_BYTES_MIN
+        } else if memory_limit > MEMORY_BUDGET_NUM_BYTES_MAX {
+            MEMORY_BUDGET_NUM_BYTES_MAX
+        } else {
+            memory_limit
+        };
 
         let writer = SingleSegmentIndexWriter::new(index, memory_limit).context(TantivySnafu)?;
         Ok(Self {

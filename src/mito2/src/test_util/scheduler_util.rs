@@ -14,6 +14,7 @@
 
 //! Utilities to mock flush and compaction schedulers.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use common_datasource::compression::CompressionType;
@@ -35,6 +36,7 @@ use crate::region::{ManifestContext, ManifestContextRef, RegionState};
 use crate::request::WorkerRequest;
 use crate::schedule::scheduler::{Job, LocalScheduler, Scheduler, SchedulerRef};
 use crate::sst::index::intermediate::IntermediateManager;
+use crate::sst::index::puffin_manager::PuffinManagerFactory;
 use crate::worker::WorkerListener;
 
 /// Scheduler mocker.
@@ -57,8 +59,17 @@ impl SchedulerEnv {
         let intm_mgr = IntermediateManager::init_fs(join_dir(&path_str, "intm"))
             .await
             .unwrap();
+        let puffin_mgr_fty =
+            PuffinManagerFactory::new(join_dir(&path_str, "puffin_cache").into(), u64::MAX, None)
+                .await
+                .unwrap();
         let object_store = ObjectStore::new(builder).unwrap().finish();
-        let access_layer = Arc::new(AccessLayer::new("", object_store.clone(), intm_mgr));
+        let access_layer = Arc::new(AccessLayer::new(
+            "",
+            object_store.clone(),
+            intm_mgr,
+            puffin_mgr_fty,
+        ));
 
         SchedulerEnv {
             path,

@@ -39,18 +39,34 @@ pub type SstPuffinWriter = CachedPuffinWriter<CacheReader, AsyncWriter>;
 pub type SstPuffinManager = CachedPuffinManager<CacheReader, AsyncReader, AsyncWriter>;
 pub type SstPuffinManagerRef = Arc<SstPuffinManager>;
 
-pub async fn build_puffin_manager(
-    cache_root_path: PathBuf,
-    cache_size: u64,
-    object_store: InstrumentedStore,
-) -> Result<SstPuffinManagerRef> {
-    let cache_manager = MokaCacheManager::new(cache_root_path, cache_size)
-        .await
-        .context(PuffinSnafu)?;
-    let puffin_file_accessor = ObjectStorePuffinFileAccessor::new(object_store);
-    let manager = CachedPuffinManager::new(Arc::new(cache_manager), Arc::new(puffin_file_accessor));
+#[derive(Clone)]
+pub struct PuffinManagerFactory {
+    cache_manager: Arc<MokaCacheManager>,
+    write_buffer_size: Option<usize>,
+}
 
-    Ok(Arc::new(manager))
+impl PuffinManagerFactory {
+    pub async fn new(
+        cache_root_path: PathBuf,
+        cache_size: u64,
+        write_buffer_size: Option<usize>,
+    ) -> Result<Self> {
+        let cache_manager = MokaCacheManager::new(cache_root_path, cache_size)
+            .await
+            .context(PuffinSnafu)?;
+        Ok(Self {
+            cache_manager: Arc::new(cache_manager),
+            write_buffer_size,
+        })
+    }
+
+    pub(crate) fn build(&self, store: object_store::ObjectStore) -> SstPuffinManagerRef {
+        let store = InstrumentedStore::new(store).with_write_buffer_size(self.write_buffer_size);
+        let puffin_file_accessor = ObjectStorePuffinFileAccessor::new(store);
+        let manager =
+            CachedPuffinManager::new(self.cache_manager.clone(), Arc::new(puffin_file_accessor));
+        Arc::new(manager)
+    }
 }
 
 pub(crate) struct ObjectStorePuffinFileAccessor {

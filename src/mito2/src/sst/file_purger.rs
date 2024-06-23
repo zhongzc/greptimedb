@@ -95,6 +95,8 @@ impl FilePurger for LocalFilePurger {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use common_test_util::temp_dir::create_temp_dir;
     use object_store::services::Fs;
     use object_store::util::join_dir;
@@ -106,6 +108,7 @@ mod tests {
     use crate::schedule::scheduler::{LocalScheduler, Scheduler};
     use crate::sst::file::{FileHandle, FileId, FileMeta, FileTimeRange, IndexType};
     use crate::sst::index::intermediate::IntermediateManager;
+    use crate::sst::index::puffin_manager::PuffinManagerFactory;
     use crate::sst::location;
 
     #[tokio::test]
@@ -122,12 +125,21 @@ mod tests {
         let intm_mgr = IntermediateManager::init_fs(join_dir(&dir_path, "intm"))
             .await
             .unwrap();
+        let puffin_mgr_fty =
+            PuffinManagerFactory::new(join_dir(&dir_path, "puffin_cache").into(), u64::MAX, None)
+                .await
+                .unwrap();
 
         let object_store = ObjectStore::new(builder).unwrap().finish();
         object_store.write(&path, vec![0; 4096]).await.unwrap();
 
         let scheduler = Arc::new(LocalScheduler::new(3));
-        let layer = Arc::new(AccessLayer::new(sst_dir, object_store.clone(), intm_mgr));
+        let layer = Arc::new(AccessLayer::new(
+            sst_dir,
+            object_store.clone(),
+            intm_mgr,
+            puffin_mgr_fty,
+        ));
 
         let file_purger = Arc::new(LocalFilePurger::new(scheduler.clone(), layer, None));
 
@@ -166,6 +178,10 @@ mod tests {
         let intm_mgr = IntermediateManager::init_fs(join_dir(&dir_path, "intm"))
             .await
             .unwrap();
+        let puffin_mgr_fty =
+            PuffinManagerFactory::new(join_dir(&dir_path, "puffin_cache").into(), u64::MAX, None)
+                .await
+                .unwrap();
         let path = location::sst_file_path(sst_dir, sst_file_id);
 
         let object_store = ObjectStore::new(builder).unwrap().finish();
@@ -178,7 +194,12 @@ mod tests {
             .unwrap();
 
         let scheduler = Arc::new(LocalScheduler::new(3));
-        let layer = Arc::new(AccessLayer::new(sst_dir, object_store.clone(), intm_mgr));
+        let layer = Arc::new(AccessLayer::new(
+            sst_dir,
+            object_store.clone(),
+            intm_mgr,
+            puffin_mgr_fty,
+        ));
 
         let file_purger = Arc::new(LocalFilePurger::new(scheduler.clone(), layer, None));
 

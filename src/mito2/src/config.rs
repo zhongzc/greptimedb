@@ -104,8 +104,12 @@ pub struct MitoConfig {
     /// Whether to allow stale entries read during replay.
     pub allow_stale_entries: bool,
 
+    /// Index configs.
+    pub index: IndexConfig,
     /// Inverted index configs.
     pub inverted_index: InvertedIndexConfig,
+    /// Fulltext index configs.
+    pub fulltext_index: FulltextIndexConfig,
 
     /// Memtable config
     pub memtable: MemtableConfig,
@@ -134,7 +138,9 @@ impl Default for MitoConfig {
             scan_parallelism: divide_num_cpus(4),
             parallel_scan_channel_size: DEFAULT_SCAN_CHANNEL_SIZE,
             allow_stale_entries: false,
+            index: IndexConfig::default(),
             inverted_index: InvertedIndexConfig::default(),
+            fulltext_index: FulltextIndexConfig::default(),
             memtable: MemtableConfig::default(),
         };
 
@@ -202,7 +208,7 @@ impl MitoConfig {
             self.experimental_write_cache_path = join_dir(data_home, "write_cache");
         }
 
-        self.inverted_index.sanitize(data_home)?;
+        self.index.sanitize(data_home)?;
 
         Ok(())
     }
@@ -269,41 +275,30 @@ impl Mode {
     }
 }
 
-/// Configuration options for the inverted index.
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(default)]
-pub struct InvertedIndexConfig {
-    /// Whether to create the index on flush: automatically or never.
-    pub create_on_flush: Mode,
-    /// Whether to create the index on compaction: automatically or never.
-    pub create_on_compaction: Mode,
-    /// Whether to apply the index on query: automatically or never.
-    pub apply_on_query: Mode,
+pub struct IndexConfig {
+    pub cache_path: String,
+    pub cache_size: ReadableSize,
     /// Write buffer size for creating the index.
     pub write_buffer_size: ReadableSize,
-    /// Memory threshold for performing an external sort during index creation.
-    /// `None` means all sorting will happen in memory.
-    #[serde_as(as = "NoneAsEmptyString")]
-    pub mem_threshold_on_create: Option<ReadableSize>,
     /// File system path to store intermediate files for external sort, defaults to `{data_home}/index_intermediate`.
     pub intermediate_path: String,
 }
 
-impl Default for InvertedIndexConfig {
+impl Default for IndexConfig {
     fn default() -> Self {
         Self {
-            create_on_flush: Mode::Auto,
-            create_on_compaction: Mode::Auto,
-            apply_on_query: Mode::Auto,
+            cache_path: String::new(),
+            cache_size: ReadableSize::mb(512),
             write_buffer_size: ReadableSize::mb(8),
-            mem_threshold_on_create: Some(ReadableSize::mb(64)),
             intermediate_path: String::new(),
         }
     }
 }
 
-impl InvertedIndexConfig {
+impl IndexConfig {
     pub fn sanitize(&mut self, data_home: &str) -> Result<()> {
         if self.intermediate_path.is_empty() {
             self.intermediate_path = join_dir(data_home, "index_intermediate");
@@ -318,6 +313,65 @@ impl InvertedIndexConfig {
         }
 
         Ok(())
+    }
+}
+
+/// Configuration options for the inverted index.
+#[serde_as]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct InvertedIndexConfig {
+    /// Whether to create the index on flush: automatically or never.
+    pub create_on_flush: Mode,
+    /// Whether to create the index on compaction: automatically or never.
+    pub create_on_compaction: Mode,
+    /// Whether to apply the index on query: automatically or never.
+    pub apply_on_query: Mode,
+    /// Memory threshold for performing an external sort during index creation.
+    /// `None` means all sorting will happen in memory.
+    #[serde_as(as = "NoneAsEmptyString")]
+    pub mem_threshold_on_create: Option<ReadableSize>,
+    /// Whether to compress the index data.
+    pub compress: bool,
+}
+
+impl Default for InvertedIndexConfig {
+    fn default() -> Self {
+        Self {
+            create_on_flush: Mode::Auto,
+            create_on_compaction: Mode::Auto,
+            apply_on_query: Mode::Auto,
+            mem_threshold_on_create: Some(ReadableSize::mb(64)),
+            compress: true,
+        }
+    }
+}
+
+#[serde_as]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct FulltextIndexConfig {
+    /// Whether to create the index on flush: automatically or never.
+    pub create_on_flush: Mode,
+    /// Whether to create the index on compaction: automatically or never.
+    pub create_on_compaction: Mode,
+    /// Whether to apply the index on query: automatically or never.
+    pub apply_on_query: Mode,
+    /// Memory threshold for creating the index.
+    pub mem_threshold_on_create: ReadableSize,
+    /// Whether to compress the index data.
+    pub compress: bool,
+}
+
+impl Default for FulltextIndexConfig {
+    fn default() -> Self {
+        Self {
+            create_on_flush: Mode::Auto,
+            create_on_compaction: Mode::Auto,
+            apply_on_query: Mode::Auto,
+            mem_threshold_on_create: ReadableSize::mb(64),
+            compress: true,
+        }
     }
 }
 

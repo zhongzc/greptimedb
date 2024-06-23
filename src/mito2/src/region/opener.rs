@@ -24,6 +24,7 @@ use futures::future::BoxFuture;
 use futures::StreamExt;
 use object_store::manager::ObjectStoreManagerRef;
 use object_store::util::{join_dir, normalize_dir};
+use puffin::puffin_manager;
 use snafu::{ensure, OptionExt};
 use store_api::logstore::provider::Provider;
 use store_api::logstore::LogStore;
@@ -48,6 +49,7 @@ use crate::request::OptionOutputTx;
 use crate::schedule::scheduler::SchedulerRef;
 use crate::sst::file_purger::LocalFilePurger;
 use crate::sst::index::intermediate::IntermediateManager;
+use crate::sst::index::puffin_manager::PuffinManagerFactory;
 use crate::time_provider::{StdTimeProvider, TimeProviderRef};
 use crate::wal::entry_reader::WalEntryReader;
 use crate::wal::{EntryId, Wal};
@@ -64,6 +66,7 @@ pub(crate) struct RegionOpener {
     cache_manager: Option<CacheManagerRef>,
     skip_wal_replay: bool,
     intermediate_manager: IntermediateManager,
+    puffin_manager_factory: PuffinManagerFactory,
     time_provider: Option<TimeProviderRef>,
     stats: ManifestStats,
     wal_entry_reader: Option<Box<dyn WalEntryReader>>,
@@ -78,6 +81,7 @@ impl RegionOpener {
         object_store_manager: ObjectStoreManagerRef,
         purge_scheduler: SchedulerRef,
         intermediate_manager: IntermediateManager,
+        puffin_manager_factory: PuffinManagerFactory,
     ) -> RegionOpener {
         RegionOpener {
             region_id,
@@ -90,6 +94,7 @@ impl RegionOpener {
             cache_manager: None,
             skip_wal_replay: false,
             intermediate_manager,
+            puffin_manager_factory,
             time_provider: None,
             stats: Default::default(),
             wal_entry_reader: None,
@@ -214,6 +219,7 @@ impl RegionOpener {
             self.region_dir,
             object_store,
             self.intermediate_manager,
+            self.puffin_manager_factory,
         ));
         let time_provider = self
             .time_provider
@@ -315,6 +321,7 @@ impl RegionOpener {
             self.region_dir.clone(),
             object_store,
             self.intermediate_manager.clone(),
+            self.puffin_manager_factory.clone(),
         ));
         let file_purger = Arc::new(LocalFilePurger::new(
             self.purge_scheduler.clone(),

@@ -22,11 +22,13 @@ use store_api::metadata::RegionMetadataRef;
 
 use crate::cache::write_cache::SstUploadRequest;
 use crate::cache::CacheManagerRef;
+use crate::config::{FulltextIndexConfig, IndexConfig, InvertedIndexConfig};
 use crate::error::{CleanDirSnafu, DeleteIndexSnafu, DeleteSstSnafu, OpenDalSnafu, Result};
 use crate::read::Source;
 use crate::region::options::IndexOptions;
 use crate::sst::file::{FileHandle, FileId, FileMeta};
 use crate::sst::index::intermediate::IntermediateManager;
+use crate::sst::index::puffin_manager::PuffinManagerFactory;
 use crate::sst::index::IndexerBuilder;
 use crate::sst::location;
 use crate::sst::parquet::reader::ParquetReaderBuilder;
@@ -42,6 +44,8 @@ pub struct AccessLayer {
     object_store: ObjectStore,
     /// Intermediate manager for inverted index.
     intermediate_manager: IntermediateManager,
+    ///
+    puffin_manager_factory: PuffinManagerFactory,
 }
 
 impl std::fmt::Debug for AccessLayer {
@@ -58,11 +62,13 @@ impl AccessLayer {
         region_dir: impl Into<String>,
         object_store: ObjectStore,
         intermediate_manager: IntermediateManager,
+        puffin_manager_factory: PuffinManagerFactory,
     ) -> AccessLayer {
         AccessLayer {
             region_dir: region_dir.into(),
             object_store,
             intermediate_manager,
+            puffin_manager_factory,
         }
     }
 
@@ -86,14 +92,14 @@ impl AccessLayer {
                 file_id: file_meta.file_id,
             })?;
 
-        if file_meta.inverted_index_available() {
-            let path = location::index_file_path(&self.region_dir, file_meta.file_id);
-            self.object_store
-                .delete(&path)
-                .await
-                .context(DeleteIndexSnafu {
+        let path = location::index_file_path(&self.region_dir, file_meta.file_id);
+        if let Err(e) = self.object_store.delete(&path).await {
+            // ignore not found error
+            if e.kind() != object_store::ErrorKind::NotFound {
+                return Err(e).context(DeleteIndexSnafu {
                     file_id: file_meta.file_id,
-                })?;
+                });
+            }
         }
 
         Ok(())
@@ -134,18 +140,23 @@ impl AccessLayer {
         } else {
             // Write cache is disabled.
             let indexer = IndexerBuilder {
-                create_inverted_index: request.create_inverted_index,
-                mem_threshold_index_create: request.mem_threshold_index_create,
-                write_buffer_size: request.index_write_buffer_size,
+                build_on: request.build_on,
+
                 file_id,
-                file_path: index_file_path,
                 metadata: &request.metadata,
                 row_group_size: write_opts.row_group_size,
-                object_store: self.object_store.clone(),
+
+                puffin_manager: self.puffin_manager_factory.build(self.object_store.clone()),
                 intermediate_manager: self.intermediate_manager.clone(),
+
+                file_path: index_file_path,
                 index_options: request.index_options,
+                index_config: request.index_config,
+                inverted_index_config: request.inverted_index_config,
+                fulltext_index_config: request.fulltext_index_config,
             }
-            .build();
+            .build()
+            .await;
             let mut writer = ParquetWriter::new_with_object_store(
                 self.object_store.clone(),
                 file_path,
@@ -174,22 +185,27 @@ impl AccessLayer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuildOn {
+    Flush,
+    Compaction,
+}
+
 /// Contents to build a SST.
 pub(crate) struct SstWriteRequest {
+    pub(crate) build_on: BuildOn,
+
     pub(crate) file_id: FileId,
     pub(crate) metadata: RegionMetadataRef,
     pub(crate) source: Source,
     pub(crate) cache_manager: CacheManagerRef,
     #[allow(dead_code)]
     pub(crate) storage: Option<String>,
-    /// Whether to create inverted index.
-    pub(crate) create_inverted_index: bool,
-    /// The threshold of memory size to create inverted index.
-    pub(crate) mem_threshold_index_create: Option<usize>,
-    /// The size of write buffer for index.
-    pub(crate) index_write_buffer_size: Option<usize>,
-    /// The options of the index for the region.
+
     pub(crate) index_options: IndexOptions,
+    pub(crate) index_config: IndexConfig,
+    pub(crate) inverted_index_config: InvertedIndexConfig,
+    pub(crate) fulltext_index_config: FulltextIndexConfig,
 }
 
 /// Creates a fs object store with atomic write dir.

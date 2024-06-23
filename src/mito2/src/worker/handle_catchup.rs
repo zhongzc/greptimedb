@@ -55,6 +55,7 @@ impl<S: LogStore> RegionWorkerLoop<S> {
                     self.object_store_manager.clone(),
                     self.purge_scheduler.clone(),
                     self.intermediate_manager.clone(),
+                    self.puffin_manager_factory.clone(),
                 )
                 .cache(Some(self.cache_manager.clone()))
                 .options(region.version().options.clone())

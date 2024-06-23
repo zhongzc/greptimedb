@@ -68,7 +68,7 @@ pub trait PuffinWriter {
 
     fn set_footer_lz4_compressed(&mut self, lz4_compressed: bool);
 
-    async fn finish(self) -> Result<()>;
+    async fn finish(self) -> Result<u64>;
 }
 
 pub struct PutOptions {

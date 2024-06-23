@@ -98,12 +98,12 @@ impl<W: io::Write> PuffinSyncWriter for PuffinFileWriter<W> {
         self.footer_lz4_compressed = lz4_compressed;
     }
 
-    fn finish(&mut self) -> Result<usize> {
+    fn finish(&mut self) -> Result<u64> {
         self.write_header_if_needed_sync()?;
         self.write_footer_sync()?;
         self.writer.flush().context(FlushSnafu)?;
 
-        Ok(self.written_bytes as usize)
+        Ok(self.written_bytes)
     }
 }
 
@@ -136,13 +136,13 @@ impl<W: AsyncWrite + Unpin + Send> PuffinAsyncWriter for PuffinFileWriter<W> {
         self.footer_lz4_compressed = lz4_compressed;
     }
 
-    async fn finish(&mut self) -> Result<usize> {
+    async fn finish(&mut self) -> Result<u64> {
         self.write_header_if_needed_async().await?;
         self.write_footer_async().await?;
         self.writer.flush().await.context(FlushSnafu)?;
         self.writer.close().await.context(CloseSnafu)?;
 
-        Ok(self.written_bytes as usize)
+        Ok(self.written_bytes)
     }
 }
 

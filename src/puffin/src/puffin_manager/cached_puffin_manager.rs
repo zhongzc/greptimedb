@@ -355,9 +355,9 @@ where
             .set_footer_lz4_compressed(lz4_compressed);
     }
 
-    async fn finish(mut self) -> Result<()> {
-        self.puffin_file_writer.finish().await?;
-        Ok(())
+    async fn finish(mut self) -> Result<u64> {
+        let size = self.puffin_file_writer.finish().await?;
+        Ok(size)
     }
 }
 

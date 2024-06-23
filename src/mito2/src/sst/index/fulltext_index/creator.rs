@@ -19,11 +19,10 @@ use api::v1::SemanticType;
 use common_telemetry::warn;
 use datatypes::scalars::ScalarVector;
 use datatypes::vectors::StringVector;
-use futures::{AsyncRead, AsyncSeek, AsyncWrite};
 use index::fulltext_index::create::{FulltextIndexCreator, TantivyFulltextIndexCreator};
 use index::fulltext_index::Config;
 use puffin::blob_metadata::CompressionCodec;
-use puffin::puffin_manager::{CachedPuffinWriter, PuffinWriter, PutOptions};
+use puffin::puffin_manager::{PuffinWriter, PutOptions};
 use snafu::{ensure, ResultExt};
 use store_api::metadata::RegionMetadataRef;
 use store_api::storage::{ColumnId, ConcreteDataType, RegionId};
@@ -37,7 +36,7 @@ use crate::sst::file::FileId;
 use crate::sst::index::fulltext_index::INDEX_BLOB_TYPE;
 use crate::sst::index::intermediate::IntermediateManager;
 use crate::sst::index::puffin_manager::SstPuffinWriter;
-use crate::sst::index::statistics::Statistics;
+use crate::sst::index::statistics::{ByteCount, RowCount, Statistics};
 
 pub struct SstIndexCreator {
     creators: HashMap<ColumnId, SingleCreator>,
@@ -59,43 +58,37 @@ impl SstIndexCreator {
         sst_file_id: &FileId,
         intermediate_manager: IntermediateManager,
         metadata: &RegionMetadataRef,
+        compression_codec: Option<CompressionCodec>,
         memory_usage_threshold: usize,
     ) -> Result<Self> {
         let mut creators = HashMap::new();
 
-        for column in &metadata.column_metadatas {
-            // TODO: assume all text field columns are fulltext indexed
+        // TODO(zhongzc): extract fulltext index requirements from metadata
 
-            if column.semantic_type != SemanticType::Field {
-                continue;
-            }
-            if column.column_schema.data_type != ConcreteDataType::string_datatype() {
-                continue;
-            }
+        // for column in &metadata.column_metadatas {
+        //     let column_id = column.column_id;
+        //     let path = intermediate_manager
+        //         .fulltext_tmpdir_builder()
+        //         .absolute_path(region_id, sst_file_id, &column_id);
 
-            let column_id = column.column_id;
-            let path = intermediate_manager
-                .fulltext_tmpdir_builder()
-                .absolute_path(region_id, sst_file_id, &column_id);
+        //     // TODO: get config from metadata
+        //     let config = Config::default();
+        //     let compression_codec = None;
 
-            // TODO: get config from metadata
-            let config = Config::default();
-            let compression_codec = None;
+        //     tokio::fs::create_dir_all(&path).await.unwrap();
+        //     let creator = TantivyFulltextIndexCreator::new(&path, config, memory_usage_threshold)
+        //         .context(FulltextSnafu)?;
 
-            tokio::fs::create_dir_all(&path).await.unwrap();
-            let creator = TantivyFulltextIndexCreator::new(&path, config, memory_usage_threshold)
-                .context(FulltextSnafu)?;
-
-            creators.insert(
-                column_id,
-                SingleCreator {
-                    inner: Box::new(creator),
-                    column_id,
-                    path,
-                    compression_codec,
-                },
-            );
-        }
+        //     creators.insert(
+        //         column_id,
+        //         SingleCreator {
+        //             inner: Box::new(creator),
+        //             column_id,
+        //             path,
+        //             compression_codec,
+        //         },
+        //     );
+        // }
 
         Ok(Self {
             creators,
@@ -121,11 +114,14 @@ impl SstIndexCreator {
         Ok(())
     }
 
-    pub async fn finish(&mut self, puffin_writer: &mut SstPuffinWriter) -> Result<u64> {
+    pub async fn finish(
+        &mut self,
+        puffin_writer: &mut SstPuffinWriter,
+    ) -> Result<(RowCount, ByteCount)> {
         ensure!(!self.aborted, OperateAbortedIndexSnafu);
 
         match self.do_finish(puffin_writer).await {
-            Ok(written_bytes) => Ok(written_bytes),
+            Ok(()) => Ok((self.stats.row_count(), self.stats.byte_count())),
             Err(finish_err) => {
                 if let Err(err) = self.do_abort().await {
                     if cfg!(any(test, feature = "test")) {
@@ -147,12 +143,9 @@ impl SstIndexCreator {
         self.do_abort().await
     }
 
-    pub fn memory_usage(&self) -> usize {
-        self.creators.values().map(|c| c.inner.memory_usage()).sum()
-    }
-
     async fn do_update(&mut self, batch: &Batch) -> Result<()> {
-        let _guard = self.stats.record_update();
+        let mut guard = self.stats.record_update();
+        guard.inc_row_count(batch.num_rows());
 
         for (column_id, creator) in self.creators.iter_mut() {
             let text_column = batch.fields().iter().find(|c| c.column_id == *column_id);
@@ -182,8 +175,8 @@ impl SstIndexCreator {
         Ok(())
     }
 
-    async fn do_finish(&mut self, puffin_writer: &mut SstPuffinWriter) -> Result<u64> {
-        let _guard = self.stats.record_finish();
+    async fn do_finish(&mut self, puffin_writer: &mut SstPuffinWriter) -> Result<()> {
+        let mut guard = self.stats.record_finish();
 
         let mut written_bytes = 0;
         for (col_id, creator) in self.creators.iter_mut() {
@@ -201,7 +194,8 @@ impl SstIndexCreator {
                 .context(PuffinAddBlobSnafu)?;
         }
 
-        Ok(written_bytes)
+        guard.inc_byte_count(written_bytes);
+        Ok(())
     }
 
     async fn do_abort(&mut self) -> Result<()> {
@@ -223,5 +217,13 @@ impl SstIndexCreator {
         self.creators.clear();
 
         first_err.unwrap_or(Ok(()))
+    }
+
+    pub fn memory_usage(&self) -> usize {
+        self.creators.values().map(|c| c.inner.memory_usage()).sum()
+    }
+
+    pub fn column_ids(&self) -> impl Iterator<Item = ColumnId> + '_ {
+        self.creators.keys().copied()
     }
 }
