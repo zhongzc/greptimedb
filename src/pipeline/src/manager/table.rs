@@ -119,6 +119,7 @@ impl PipelineTable {
                     semantic_type: SemanticType::Tag as i32,
                     comment: "".to_string(),
                     datatype_extension: None,
+                    options: todo!(),
                 },
                 ColumnDef {
                     name: PIPELINE_TABLE_PIPELINE_SCHEMA_COLUMN_NAME.to_string(),
@@ -128,6 +129,7 @@ impl PipelineTable {
                     semantic_type: SemanticType::Tag as i32,
                     comment: "".to_string(),
                     datatype_extension: None,
+                    options: todo!(),
                 },
                 ColumnDef {
                     name: PIPELINE_TABLE_PIPELINE_CONTENT_TYPE_COLUMN_NAME.to_string(),
@@ -137,6 +139,7 @@ impl PipelineTable {
                     semantic_type: SemanticType::Tag as i32,
                     comment: "".to_string(),
                     datatype_extension: None,
+                    options: todo!(),
                 },
                 ColumnDef {
                     name: PIPELINE_TABLE_PIPELINE_CONTENT_COLUMN_NAME.to_string(),
@@ -146,6 +149,7 @@ impl PipelineTable {
                     semantic_type: SemanticType::Field as i32,
                     comment: "".to_string(),
                     datatype_extension: None,
+                    options: todo!(),
                 },
                 ColumnDef {
                     name: PIPELINE_TABLE_CREATED_AT_COLUMN_NAME.to_string(),
@@ -155,6 +159,7 @@ impl PipelineTable {
                     semantic_type: SemanticType::Timestamp as i32,
                     comment: "".to_string(),
                     datatype_extension: None,
+                    options: todo!(),
                 },
             ],
         )

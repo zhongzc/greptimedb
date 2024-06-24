@@ -442,6 +442,7 @@ pub fn column_schemas_to_defs(
                 semantic_type,
                 comment,
                 datatype_extension: datatype.1,
+                options: todo!(),
             })
         })
         .collect()

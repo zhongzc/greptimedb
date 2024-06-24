@@ -165,6 +165,7 @@ fn get_node_id(header: &RequestHeader) -> u64 {
     match header.role() {
         Role::Frontend => next_id(),
         Role::Datanode => header.member_id,
+        Role::Flownode => todo!(),
     }
 }
 

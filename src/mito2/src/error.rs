@@ -767,6 +767,26 @@ pub enum Error {
         location: Location,
         source: Arc<Error>,
     },
+
+    #[snafu(display("Failed to retrieve fulltext options"))]
+    FulltextOptions {
+        #[snafu(implicit)]
+        location: Location,
+        source: datatypes::error::Error,
+        column_name: String,
+    },
+
+    #[snafu(display(
+        "Column to build fulltext index should be string type, column: {:?}, type: {:?}",
+        column_name,
+        data_type
+    ))]
+    FulltextTypeNotMatch {
+        #[snafu(implicit)]
+        location: Location,
+        column_name: String,
+        data_type: ConcreteDataType,
+    },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -868,8 +888,8 @@ impl ErrorExt for Error {
             PuffinReadMetadata { source, .. }
             | PuffinReadBlob { source, .. }
             | PuffinFinish { source, .. }
-            | PuffinAddBlob { source, .. } 
-            | PuffinError { source, .. }=> source.status_code(),
+            | PuffinAddBlob { source, .. }
+            | PuffinError { source, .. } => source.status_code(),
             CleanDir { .. } => StatusCode::Unexpected,
             InvalidConfig { .. } => StatusCode::InvalidArguments,
             StaleLogEntry { .. } => StatusCode::Unexpected,
@@ -888,6 +908,9 @@ impl ErrorExt for Error {
             RegionStopped { .. } => StatusCode::RegionNotReady,
             TimeRangePredicateOverflow { .. } => StatusCode::InvalidArguments,
             BuildTimeRangeFilter { .. } => StatusCode::Unexpected,
+
+            FulltextOptions { source, .. } => source.status_code(),
+            FulltextTypeNotMatch { .. } => StatusCode::Unexpected,
         }
     }
 

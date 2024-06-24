@@ -19,10 +19,9 @@ use std::sync::Arc;
 use common_base::readable_size::ReadableSize;
 use parquet::file::metadata::ParquetMetaData;
 
+use super::index::IndexOutput;
 use crate::sst::file::FileTimeRange;
 use crate::sst::DEFAULT_WRITE_BUFFER_SIZE;
-
-use super::index::IndexOutput;
 
 pub(crate) mod file_range;
 mod format;
@@ -71,7 +70,7 @@ pub struct SstInfo {
     pub num_rows: usize,
     /// File Meta Data
     pub file_metadata: Option<Arc<ParquetMetaData>>,
-    
+
     pub index_output: IndexOutput,
 }
 

@@ -438,6 +438,7 @@ pub fn sql_column_def_to_grpc_column_def(
         semantic_type: semantic_type as _,
         comment: String::new(),
         datatype_extension: datatype_ext,
+        options: todo!(),
     })
 }
 

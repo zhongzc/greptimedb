@@ -71,6 +71,7 @@ pub(crate) fn coerce_columns(transform: &Transform) -> Result<Vec<ColumnSchema>,
             datatype,
             semantic_type,
             datatype_extension: None,
+            options: todo!(),
         };
         columns.push(column);
     }

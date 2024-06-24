@@ -18,9 +18,10 @@ use std::path::PathBuf;
 use api::v1::SemanticType;
 use common_telemetry::warn;
 use datatypes::scalars::ScalarVector;
+use datatypes::schema::FulltextAnalyzer;
 use datatypes::vectors::StringVector;
 use index::fulltext_index::create::{FulltextIndexCreator, TantivyFulltextIndexCreator};
-use index::fulltext_index::Config;
+use index::fulltext_index::{Analyzer, Config};
 use puffin::blob_metadata::CompressionCodec;
 use puffin::puffin_manager::{PuffinWriter, PutOptions};
 use snafu::{ensure, ResultExt};
@@ -29,7 +30,8 @@ use store_api::storage::{ColumnId, ConcreteDataType, RegionId};
 use tokio::fs;
 
 use crate::error::{
-    FulltextCleanupPathSnafu, FulltextSnafu, OperateAbortedIndexSnafu, PuffinAddBlobSnafu, Result,
+    FulltextCleanupPathSnafu, FulltextOptionsSnafu, FulltextSnafu, FulltextTypeNotMatchSnafu,
+    OperateAbortedIndexSnafu, PuffinAddBlobSnafu, Result,
 };
 use crate::read::Batch;
 use crate::sst::file::FileId;
@@ -63,32 +65,55 @@ impl SstIndexCreator {
     ) -> Result<Self> {
         let mut creators = HashMap::new();
 
-        // TODO(zhongzc): extract fulltext index requirements from metadata
+        for column in &metadata.column_metadatas {
+            let options =
+                column
+                    .column_schema
+                    .fulltext_options()
+                    .context(FulltextOptionsSnafu {
+                        column_name: &column.column_schema.name,
+                    })?;
 
-        // for column in &metadata.column_metadatas {
-        //     let column_id = column.column_id;
-        //     let path = intermediate_manager
-        //         .fulltext_tmpdir_builder()
-        //         .absolute_path(region_id, sst_file_id, &column_id);
+            let options = match options {
+                Some(options) if options.enable => options,
+                _ => continue,
+            };
 
-        //     // TODO: get config from metadata
-        //     let config = Config::default();
-        //     let compression_codec = None;
+            ensure!(
+                column.column_schema.data_type == ConcreteDataType::string_datatype(),
+                FulltextTypeNotMatchSnafu {
+                    column_name: &column.column_schema.name,
+                    data_type: &column.column_schema.data_type,
+                }
+            );
 
-        //     tokio::fs::create_dir_all(&path).await.unwrap();
-        //     let creator = TantivyFulltextIndexCreator::new(&path, config, memory_usage_threshold)
-        //         .context(FulltextSnafu)?;
+            let column_id = column.column_id;
+            let path = intermediate_manager
+                .fulltext_tmpdir_builder()
+                .absolute_path(region_id, sst_file_id, &column_id);
 
-        //     creators.insert(
-        //         column_id,
-        //         SingleCreator {
-        //             inner: Box::new(creator),
-        //             column_id,
-        //             path,
-        //             compression_codec,
-        //         },
-        //     );
-        // }
+            let config = Config {
+                analyzer: match options.analyzer {
+                    FulltextAnalyzer::English => Analyzer::English,
+                    FulltextAnalyzer::Chinese => Analyzer::Chinese,
+                },
+                case_sensitive: options.case_sensitive,
+            };
+
+            tokio::fs::create_dir_all(&path).await.unwrap();
+            let creator = TantivyFulltextIndexCreator::new(&path, config, memory_usage_threshold)
+                .context(FulltextSnafu)?;
+
+            creators.insert(
+                column_id,
+                SingleCreator {
+                    inner: Box::new(creator),
+                    column_id,
+                    path,
+                    compression_codec,
+                },
+            );
+        }
 
         Ok(Self {
             creators,

@@ -132,6 +132,7 @@ fn extract_base_info(
             role: match role {
                 Role::Datanode => cluster::Role::Datanode,
                 Role::Frontend => cluster::Role::Frontend,
+                Role::Flownode => todo!(),
             },
             node_id: peer.id,
         },

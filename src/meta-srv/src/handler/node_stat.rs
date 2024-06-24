@@ -142,7 +142,7 @@ impl TryFrom<api::v1::meta::RegionStat> for RegionStat {
             rcus: value.rcus,
             wcus: value.wcus,
             approximate_bytes: value.approximate_bytes,
-            approximate_rows: value.approximate_rows,
+            approximate_rows: 0,
             engine: value.engine.to_string(),
             role: RegionRole::from(value.role()),
         })

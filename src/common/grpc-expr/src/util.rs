@@ -127,6 +127,7 @@ pub fn build_create_table_expr(
             semantic_type,
             comment: String::new(),
             datatype_extension: datatype_extension.clone(),
+            options: todo!(),
         };
         column_defs.push(column_def);
     }
@@ -168,6 +169,7 @@ pub fn extract_new_columns(
                 semantic_type: expr.semantic_type,
                 comment: String::new(),
                 datatype_extension: expr.datatype_extension.clone(),
+                options: todo!(),
             });
             AddColumn {
                 column_def,

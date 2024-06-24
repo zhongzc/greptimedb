@@ -128,12 +128,14 @@ fn build_schema(col_types: &[ColumnDataType], mut rng: &mut SmallRng) -> Vec<Col
             datatype: *col_type as i32,
             semantic_type: SemanticType::Field as i32,
             datatype_extension: None,
+            options: todo!(),
         })
         .chain(vec![ColumnSchema {
             column_name: "ts".to_string(),
             datatype: ColumnDataType::TimestampMillisecond as i32,
             semantic_type: SemanticType::Tag as i32,
             datatype_extension: None,
+            options: Default::default(),
         }])
         .collect()
 }

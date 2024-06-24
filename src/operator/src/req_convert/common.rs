@@ -46,6 +46,7 @@ pub fn columns_to_rows(columns: Vec<Column>, row_count: u32) -> Result<Rows> {
             datatype: column.datatype,
             semantic_type: column.semantic_type,
             datatype_extension: column.datatype_extension.clone(),
+            options: column.options.clone(),
         };
         schema.push(column_schema);
 
@@ -201,6 +202,7 @@ pub fn column_schema(
                 datatype: datatype as i32,
                 semantic_type: semantic_type(table_info, column_name)?.into(),
                 datatype_extension,
+                options: todo!(),
             })
         })
         .collect::<Result<Vec<_>>>()
