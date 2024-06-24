@@ -26,7 +26,7 @@ use common_telemetry::{debug, warn};
 use object_store::ObjectStore;
 use puffin::blob_metadata::CompressionCodec;
 use puffin::puffin_manager::{PuffinManager as _, PuffinReader as _, PuffinWriter as _};
-use puffin_manager::SstPuffinWriter;
+use puffin_manager::{SstPuffinManager, SstPuffinWriter};
 use snafu::ResultExt;
 use store::InstrumentedStore;
 use store_api::metadata::RegionMetadataRef;
@@ -42,7 +42,6 @@ use crate::sst::file::FileId;
 use crate::sst::index::fulltext_index::creator::SstIndexCreator as FulltextIndexCreator;
 use crate::sst::index::intermediate::IntermediateManager;
 use crate::sst::index::inverted_index::creator::SstIndexCreator as InvertedIndexCreator;
-use crate::sst::index::puffin_manager::SstPuffinManagerRef;
 
 /// The index creator that hides the error handling details.
 #[derive(Default)]
@@ -343,7 +342,7 @@ pub(crate) struct IndexerBuilder<'a> {
     pub(crate) metadata: &'a RegionMetadataRef,
     pub(crate) row_group_size: usize,
 
-    pub(crate) puffin_manager: SstPuffinManagerRef,
+    pub(crate) puffin_manager: SstPuffinManager,
     pub(crate) intermediate_manager: IntermediateManager,
     pub(crate) file_path: String,
 

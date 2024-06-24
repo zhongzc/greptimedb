@@ -46,6 +46,7 @@ use crate::region::version::VersionRef;
 use crate::sst::file::{overlaps, FileHandle, FileMeta};
 use crate::sst::index::inverted_index::applier::builder::SstIndexApplierBuilder;
 use crate::sst::index::inverted_index::applier::SstIndexApplierRef;
+use crate::sst::index::puffin_manager::PuffinManagerFactory;
 use crate::sst::parquet::file_range::FileRange;
 
 /// A scanner scans a region and returns a [SendableRecordBatchStream].
@@ -341,6 +342,7 @@ impl ScanRegion {
                 .iter()
                 .copied()
                 .collect(),
+            self.access_layer.puffin_manager_factory().clone(),
         )
         .build(&self.request.filters)
         .inspect_err(|err| warn!(err; "Failed to build index applier"))

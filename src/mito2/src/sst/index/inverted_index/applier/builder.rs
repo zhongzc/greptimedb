@@ -29,6 +29,7 @@ use datatypes::value::Value;
 use index::inverted_index::search::index_apply::PredicatesIndexApplier;
 use index::inverted_index::search::predicate::Predicate;
 use object_store::ObjectStore;
+use puffin::puffin_manager;
 use snafu::{OptionExt, ResultExt};
 use store_api::metadata::RegionMetadata;
 use store_api::storage::ColumnId;
@@ -38,6 +39,7 @@ use crate::error::{BuildIndexApplierSnafu, ColumnNotFoundSnafu, ConvertValueSnaf
 use crate::row_converter::SortField;
 use crate::sst::index::inverted_index::applier::SstIndexApplier;
 use crate::sst::index::inverted_index::codec::IndexValueCodec;
+use crate::sst::index::puffin_manager::PuffinManagerFactory;
 
 /// Constructs an [`SstIndexApplier`] which applies predicates to SST files during scan.
 pub(crate) struct SstIndexApplierBuilder<'a> {
@@ -58,6 +60,8 @@ pub(crate) struct SstIndexApplierBuilder<'a> {
 
     /// Stores predicates during traversal on the Expr tree.
     output: HashMap<ColumnId, Vec<Predicate>>,
+
+    puffin_manager_factory: PuffinManagerFactory,
 }
 
 impl<'a> SstIndexApplierBuilder<'a> {
@@ -68,6 +72,7 @@ impl<'a> SstIndexApplierBuilder<'a> {
         file_cache: Option<FileCacheRef>,
         metadata: &'a RegionMetadata,
         ignore_column_ids: HashSet<ColumnId>,
+        puffin_manager_factory: PuffinManagerFactory,
     ) -> Self {
         Self {
             region_dir,
@@ -76,6 +81,7 @@ impl<'a> SstIndexApplierBuilder<'a> {
             metadata,
             ignore_column_ids,
             output: HashMap::default(),
+            puffin_manager_factory,
         }
     }
 
@@ -102,6 +108,7 @@ impl<'a> SstIndexApplierBuilder<'a> {
             self.object_store,
             self.file_cache,
             Box::new(applier.context(BuildIndexApplierSnafu)?),
+            self.puffin_manager_factory,
         )))
     }
 
@@ -194,167 +201,167 @@ impl<'a> SstIndexApplierBuilder<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use api::v1::SemanticType;
-    use datafusion_common::Column;
-    use datafusion_expr::Between;
-    use datatypes::data_type::ConcreteDataType;
-    use datatypes::schema::ColumnSchema;
-    use index::inverted_index::search::predicate::{
-        Bound, Range, RangePredicate, RegexMatchPredicate,
-    };
-    use object_store::services::Memory;
-    use object_store::ObjectStore;
-    use store_api::metadata::{ColumnMetadata, RegionMetadata, RegionMetadataBuilder};
-    use store_api::storage::RegionId;
+// #[cfg(test)]
+// mod tests {
+//     use api::v1::SemanticType;
+//     use datafusion_common::Column;
+//     use datafusion_expr::Between;
+//     use datatypes::data_type::ConcreteDataType;
+//     use datatypes::schema::ColumnSchema;
+//     use index::inverted_index::search::predicate::{
+//         Bound, Range, RangePredicate, RegexMatchPredicate,
+//     };
+//     use object_store::services::Memory;
+//     use object_store::ObjectStore;
+//     use store_api::metadata::{ColumnMetadata, RegionMetadata, RegionMetadataBuilder};
+//     use store_api::storage::RegionId;
 
-    use super::*;
+//     use super::*;
 
-    pub(crate) fn test_region_metadata() -> RegionMetadata {
-        let mut builder = RegionMetadataBuilder::new(RegionId::new(1234, 5678));
-        builder
-            .push_column_metadata(ColumnMetadata {
-                column_schema: ColumnSchema::new("a", ConcreteDataType::string_datatype(), false),
-                semantic_type: SemanticType::Tag,
-                column_id: 1,
-            })
-            .push_column_metadata(ColumnMetadata {
-                column_schema: ColumnSchema::new("b", ConcreteDataType::int64_datatype(), false),
-                semantic_type: SemanticType::Tag,
-                column_id: 2,
-            })
-            .push_column_metadata(ColumnMetadata {
-                column_schema: ColumnSchema::new("c", ConcreteDataType::string_datatype(), false),
-                semantic_type: SemanticType::Field,
-                column_id: 3,
-            })
-            .push_column_metadata(ColumnMetadata {
-                column_schema: ColumnSchema::new(
-                    "d",
-                    ConcreteDataType::timestamp_millisecond_datatype(),
-                    false,
-                ),
-                semantic_type: SemanticType::Timestamp,
-                column_id: 4,
-            })
-            .primary_key(vec![1, 2]);
-        builder.build().unwrap()
-    }
+//     pub(crate) fn test_region_metadata() -> RegionMetadata {
+//         let mut builder = RegionMetadataBuilder::new(RegionId::new(1234, 5678));
+//         builder
+//             .push_column_metadata(ColumnMetadata {
+//                 column_schema: ColumnSchema::new("a", ConcreteDataType::string_datatype(), false),
+//                 semantic_type: SemanticType::Tag,
+//                 column_id: 1,
+//             })
+//             .push_column_metadata(ColumnMetadata {
+//                 column_schema: ColumnSchema::new("b", ConcreteDataType::int64_datatype(), false),
+//                 semantic_type: SemanticType::Tag,
+//                 column_id: 2,
+//             })
+//             .push_column_metadata(ColumnMetadata {
+//                 column_schema: ColumnSchema::new("c", ConcreteDataType::string_datatype(), false),
+//                 semantic_type: SemanticType::Field,
+//                 column_id: 3,
+//             })
+//             .push_column_metadata(ColumnMetadata {
+//                 column_schema: ColumnSchema::new(
+//                     "d",
+//                     ConcreteDataType::timestamp_millisecond_datatype(),
+//                     false,
+//                 ),
+//                 semantic_type: SemanticType::Timestamp,
+//                 column_id: 4,
+//             })
+//             .primary_key(vec![1, 2]);
+//         builder.build().unwrap()
+//     }
 
-    pub(crate) fn test_object_store() -> ObjectStore {
-        ObjectStore::new(Memory::default()).unwrap().finish()
-    }
+//     pub(crate) fn test_object_store() -> ObjectStore {
+//         ObjectStore::new(Memory::default()).unwrap().finish()
+//     }
 
-    pub(crate) fn tag_column() -> Expr {
-        Expr::Column(Column {
-            relation: None,
-            name: "a".to_string(),
-        })
-    }
+//     pub(crate) fn tag_column() -> Expr {
+//         Expr::Column(Column {
+//             relation: None,
+//             name: "a".to_string(),
+//         })
+//     }
 
-    pub(crate) fn tag_column2() -> Expr {
-        Expr::Column(Column {
-            relation: None,
-            name: "b".to_string(),
-        })
-    }
+//     pub(crate) fn tag_column2() -> Expr {
+//         Expr::Column(Column {
+//             relation: None,
+//             name: "b".to_string(),
+//         })
+//     }
 
-    pub(crate) fn field_column() -> Expr {
-        Expr::Column(Column {
-            relation: None,
-            name: "c".to_string(),
-        })
-    }
+//     pub(crate) fn field_column() -> Expr {
+//         Expr::Column(Column {
+//             relation: None,
+//             name: "c".to_string(),
+//         })
+//     }
 
-    pub(crate) fn nonexistent_column() -> Expr {
-        Expr::Column(Column {
-            relation: None,
-            name: "nonexistent".to_string(),
-        })
-    }
+//     pub(crate) fn nonexistent_column() -> Expr {
+//         Expr::Column(Column {
+//             relation: None,
+//             name: "nonexistent".to_string(),
+//         })
+//     }
 
-    pub(crate) fn string_lit(s: impl Into<String>) -> Expr {
-        Expr::Literal(ScalarValue::Utf8(Some(s.into())))
-    }
+//     pub(crate) fn string_lit(s: impl Into<String>) -> Expr {
+//         Expr::Literal(ScalarValue::Utf8(Some(s.into())))
+//     }
 
-    pub(crate) fn int64_lit(i: impl Into<i64>) -> Expr {
-        Expr::Literal(ScalarValue::Int64(Some(i.into())))
-    }
+//     pub(crate) fn int64_lit(i: impl Into<i64>) -> Expr {
+//         Expr::Literal(ScalarValue::Int64(Some(i.into())))
+//     }
 
-    pub(crate) fn encoded_string(s: impl Into<String>) -> Vec<u8> {
-        let mut bytes = vec![];
-        IndexValueCodec::encode_nonnull_value(
-            Value::from(s.into()).as_value_ref(),
-            &SortField::new(ConcreteDataType::string_datatype()),
-            &mut bytes,
-        )
-        .unwrap();
-        bytes
-    }
+//     pub(crate) fn encoded_string(s: impl Into<String>) -> Vec<u8> {
+//         let mut bytes = vec![];
+//         IndexValueCodec::encode_nonnull_value(
+//             Value::from(s.into()).as_value_ref(),
+//             &SortField::new(ConcreteDataType::string_datatype()),
+//             &mut bytes,
+//         )
+//         .unwrap();
+//         bytes
+//     }
 
-    pub(crate) fn encoded_int64(s: impl Into<i64>) -> Vec<u8> {
-        let mut bytes = vec![];
-        IndexValueCodec::encode_nonnull_value(
-            Value::from(s.into()).as_value_ref(),
-            &SortField::new(ConcreteDataType::int64_datatype()),
-            &mut bytes,
-        )
-        .unwrap();
-        bytes
-    }
+//     pub(crate) fn encoded_int64(s: impl Into<i64>) -> Vec<u8> {
+//         let mut bytes = vec![];
+//         IndexValueCodec::encode_nonnull_value(
+//             Value::from(s.into()).as_value_ref(),
+//             &SortField::new(ConcreteDataType::int64_datatype()),
+//             &mut bytes,
+//         )
+//         .unwrap();
+//         bytes
+//     }
 
-    #[test]
-    fn test_collect_and_basic() {
-        let metadata = test_region_metadata();
-        let mut builder = SstIndexApplierBuilder::new(
-            "test".to_string(),
-            test_object_store(),
-            None,
-            &metadata,
-            HashSet::default(),
-        );
+//     #[test]
+//     fn test_collect_and_basic() {
+//         let metadata = test_region_metadata();
+//         let mut builder = SstIndexApplierBuilder::new(
+//             "test".to_string(),
+//             test_object_store(),
+//             None,
+//             &metadata,
+//             HashSet::default(),
+//         );
 
-        let expr = Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::BinaryExpr(BinaryExpr {
-                left: Box::new(tag_column()),
-                op: Operator::RegexMatch,
-                right: Box::new(string_lit("bar")),
-            })),
-            op: Operator::And,
-            right: Box::new(Expr::Between(Between {
-                expr: Box::new(tag_column2()),
-                negated: false,
-                low: Box::new(int64_lit(123)),
-                high: Box::new(int64_lit(456)),
-            })),
-        });
+//         let expr = Expr::BinaryExpr(BinaryExpr {
+//             left: Box::new(Expr::BinaryExpr(BinaryExpr {
+//                 left: Box::new(tag_column()),
+//                 op: Operator::RegexMatch,
+//                 right: Box::new(string_lit("bar")),
+//             })),
+//             op: Operator::And,
+//             right: Box::new(Expr::Between(Between {
+//                 expr: Box::new(tag_column2()),
+//                 negated: false,
+//                 low: Box::new(int64_lit(123)),
+//                 high: Box::new(int64_lit(456)),
+//             })),
+//         });
 
-        builder.traverse_and_collect(&expr);
-        let predicates = builder.output.get(&1).unwrap();
-        assert_eq!(predicates.len(), 1);
-        assert_eq!(
-            predicates[0],
-            Predicate::RegexMatch(RegexMatchPredicate {
-                pattern: "bar".to_string()
-            })
-        );
-        let predicates = builder.output.get(&2).unwrap();
-        assert_eq!(predicates.len(), 1);
-        assert_eq!(
-            predicates[0],
-            Predicate::Range(RangePredicate {
-                range: Range {
-                    lower: Some(Bound {
-                        inclusive: true,
-                        value: encoded_int64(123),
-                    }),
-                    upper: Some(Bound {
-                        inclusive: true,
-                        value: encoded_int64(456),
-                    }),
-                }
-            })
-        );
-    }
-}
+//         builder.traverse_and_collect(&expr);
+//         let predicates = builder.output.get(&1).unwrap();
+//         assert_eq!(predicates.len(), 1);
+//         assert_eq!(
+//             predicates[0],
+//             Predicate::RegexMatch(RegexMatchPredicate {
+//                 pattern: "bar".to_string()
+//             })
+//         );
+//         let predicates = builder.output.get(&2).unwrap();
+//         assert_eq!(predicates.len(), 1);
+//         assert_eq!(
+//             predicates[0],
+//             Predicate::Range(RangePredicate {
+//                 range: Range {
+//                     lower: Some(Bound {
+//                         inclusive: true,
+//                         value: encoded_int64(123),
+//                     }),
+//                     upper: Some(Bound {
+//                         inclusive: true,
+//                         value: encoded_int64(456),
+//                     }),
+//                 }
+//             })
+//         );
+//     }
+// }

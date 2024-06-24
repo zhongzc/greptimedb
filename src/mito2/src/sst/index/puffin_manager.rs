@@ -37,7 +37,7 @@ type AsyncWriter = InstrumentedAsyncWrite<'static, object_store::FuturesAsyncWri
 pub type SstPuffinReader = CachedPuffinReader<CacheReader, AsyncReader, AsyncWriter>;
 pub type SstPuffinWriter = CachedPuffinWriter<CacheReader, AsyncWriter>;
 pub type SstPuffinManager = CachedPuffinManager<CacheReader, AsyncReader, AsyncWriter>;
-pub type SstPuffinManagerRef = Arc<SstPuffinManager>;
+// pub type SstPuffinManagerRef = Arc<SstPuffinManager>;
 
 #[derive(Clone)]
 pub struct PuffinManagerFactory {
@@ -60,12 +60,10 @@ impl PuffinManagerFactory {
         })
     }
 
-    pub(crate) fn build(&self, store: object_store::ObjectStore) -> SstPuffinManagerRef {
+    pub(crate) fn build(&self, store: object_store::ObjectStore) -> SstPuffinManager {
         let store = InstrumentedStore::new(store).with_write_buffer_size(self.write_buffer_size);
         let puffin_file_accessor = ObjectStorePuffinFileAccessor::new(store);
-        let manager =
-            CachedPuffinManager::new(self.cache_manager.clone(), Arc::new(puffin_file_accessor));
-        Arc::new(manager)
+        CachedPuffinManager::new(self.cache_manager.clone(), Arc::new(puffin_file_accessor))
     }
 }
 
