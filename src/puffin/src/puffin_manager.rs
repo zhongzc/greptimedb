@@ -28,6 +28,8 @@ use futures::{AsyncRead, AsyncSeek};
 use crate::blob_metadata::CompressionCodec;
 use crate::error::Result;
 
+pub use fs_puffin_manager::NewTrait;
+
 /// The `PuffinManager` trait provides a unified interface for creating `PuffinReader` and `PuffinWriter`.
 #[async_trait]
 pub trait PuffinManager {
@@ -94,7 +96,7 @@ pub trait PuffinReader {
 /// Users should hold the `BlobGuard` until they are done with the blob data.
 #[auto_impl::auto_impl(Arc)]
 pub trait BlobGuard {
-    type Reader: AsyncRead + AsyncSeek + Unpin;
+    type Reader: AsyncRead + AsyncSeek + Unpin + Send;
     fn reader(&self) -> BoxFuture<'static, Result<Self::Reader>>;
 }
 

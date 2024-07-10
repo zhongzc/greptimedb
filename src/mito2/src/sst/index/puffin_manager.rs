@@ -22,7 +22,7 @@ use puffin::error::{self as puffin_error, Result as PuffinResult};
 use puffin::puffin_manager::file_accessor::PuffinFileAccessor;
 use puffin::puffin_manager::fs_puffin_manager::FsPuffinManager;
 use puffin::puffin_manager::stager::{BoundedStager, FsBlobGuard};
-use puffin::puffin_manager::{BlobGuard, PuffinManager};
+use puffin::puffin_manager::{BlobGuard, PuffinManager, PuffinReader};
 use snafu::ResultExt;
 
 use crate::error::{PuffinInitStagerSnafu, Result};
@@ -35,7 +35,8 @@ use crate::sst::index::store::{self, InstrumentedStore};
 type InstrumentedAsyncRead = store::InstrumentedAsyncRead<'static, FuturesAsyncReader>;
 type InstrumentedAsyncWrite = store::InstrumentedAsyncWrite<'static, FuturesAsyncWriter>;
 
-pub(crate) type BlobReader = <Arc<FsBlobGuard> as BlobGuard>::Reader;
+pub(crate) type BlobReader =
+    <<<SstPuffinManager as PuffinManager>::Reader as PuffinReader>::Blob as BlobGuard>::Reader;
 pub(crate) type SstPuffinWriter = <SstPuffinManager as PuffinManager>::Writer;
 pub(crate) type SstPuffinManager =
     FsPuffinManager<Arc<BoundedStager>, ObjectStorePuffinFileAccessor>;

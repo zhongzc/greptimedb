@@ -50,6 +50,13 @@ impl<R> PuffinFileReader<R> {
             metadata: None,
         }
     }
+    pub fn into_blob_reader(self, blob_metadata: &BlobMetadata) -> PartialReader<R> {
+        PartialReader::new(
+            self.source,
+            blob_metadata.offset as _,
+            blob_metadata.length as _,
+        )
+    }
 
     fn validate_file_size(file_size: u64) -> Result<()> {
         ensure!(

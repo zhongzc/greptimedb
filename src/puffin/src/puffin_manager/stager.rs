@@ -54,7 +54,7 @@ pub trait InitDirFn = Fn(DirWriterProviderRef) -> WriteResult;
 #[async_trait]
 #[auto_impl::auto_impl(Arc)]
 pub trait Stager: Send + Sync {
-    type Blob: BlobGuard;
+    type Blob: BlobGuard + Clone + Send + 'static;
     type Dir: DirGuard;
 
     /// Retrieves a blob, initializing it if necessary using the provided `init_fn`.

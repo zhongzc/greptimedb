@@ -16,10 +16,10 @@ use async_compression::futures::bufread::ZstdDecoder;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::io::BufReader;
-use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
+use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, FutureExt};
 use snafu::{ensure, OptionExt, ResultExt};
 
-use crate::blob_metadata::CompressionCodec;
+use crate::blob_metadata::{BlobMetadata, CompressionCodec};
 use crate::error::{
     BlobIndexOutOfBoundSnafu, BlobNotFoundSnafu, DeserializeJsonSnafu, FileKeyNotMatchSnafu,
     ReadSnafu, Result, UnsupportedDecompressionSnafu, WriteSnafu,
@@ -28,7 +28,7 @@ use crate::file_format::reader::{AsyncReader, PuffinFileReader};
 use crate::puffin_manager::file_accessor::PuffinFileAccessor;
 use crate::puffin_manager::fs_puffin_manager::dir_meta::DirMetadata;
 use crate::puffin_manager::stager::{BoxWriter, DirWriterProviderRef, Stager};
-use crate::puffin_manager::PuffinReader;
+use crate::puffin_manager::{BlobGuard, PuffinReader};
 
 /// `FsPuffinReader` is a `PuffinReader` that provides fs readers for puffin files.
 pub struct FsPuffinReader<S, F> {
@@ -58,22 +58,44 @@ where
     S: Stager,
     F: PuffinFileAccessor + Clone,
 {
-    type Blob = S::Blob;
+    type Blob = BG<S::Blob, F>;
     type Dir = S::Dir;
 
     async fn blob(&self, key: &str) -> Result<Self::Blob> {
-        self.stager
-            .get_blob(
-                self.puffin_file_name.as_str(),
-                key,
-                Box::new(move |writer| {
-                    let accessor = self.puffin_file_accessor.clone();
-                    let puffin_file_name = self.puffin_file_name.clone();
-                    let key = key.to_string();
-                    Self::init_blob_to_cache(puffin_file_name, key, writer, accessor)
-                }),
+        let reader = self
+            .puffin_file_accessor
+            .reader(&self.puffin_file_name)
+            .await?;
+        let mut file = PuffinFileReader::new(reader);
+
+        let metadata = file.metadata().await?;
+        let blob_metadata = metadata
+            .blobs
+            .iter()
+            .find(|m| m.blob_type == key)
+            .context(BlobNotFoundSnafu { blob: key })?;
+
+        Ok(if blob_metadata.compression_codec.is_none() {
+            BG::Direct {
+                blob_metadata: blob_metadata.clone(),
+                f: self.puffin_file_accessor.clone(),
+            }
+        } else {
+            BG::SGuard(
+                self.stager
+                    .get_blob(
+                        self.puffin_file_name.as_str(),
+                        key,
+                        Box::new(move |writer| {
+                            let accessor = self.puffin_file_accessor.clone();
+                            let puffin_file_name = self.puffin_file_name.clone();
+                            let key = key.to_string();
+                            Self::init_blob_to_cache(puffin_file_name, key, writer, accessor)
+                        }),
+                    )
+                    .await?,
             )
-            .await
+        })
     }
 
     async fn dir(&self, key: &str) -> Result<Self::Dir> {
@@ -193,6 +215,37 @@ where
             None => futures::io::copy(reader, &mut writer)
                 .await
                 .context(WriteSnafu),
+        }
+    }
+}
+
+pub trait NewTrait: futures::AsyncRead + futures::AsyncSeek + Send + Unpin {}
+
+impl<R> NewTrait for R where R: futures::AsyncRead + futures::AsyncSeek + Send + Unpin {}
+
+#[derive(Clone)]
+pub enum BG<S: BlobGuard + Clone, F: PuffinFileAccessor + Clone> {
+    SGuard(S),
+    Direct { blob_metadata: BlobMetadata, f: F },
+}
+
+impl<S: BlobGuard + Clone + Send + 'static, F: PuffinFileAccessor + Clone> BlobGuard for BG<S, F>
+where
+    <S as BlobGuard>::Reader: NewTrait + 'static,
+{
+    type Reader = Box<dyn NewTrait>;
+
+    fn reader(&self) -> BoxFuture<'static, Result<Self::Reader>> {
+        match self.clone() {
+            BG::SGuard(guard) => {
+                Box::pin(async move { guard.reader().await.map(|r| Box::new(r) as _) })
+            }
+            BG::Direct { blob_metadata, f } => Box::pin(async move {
+                let r = f.reader("").await.unwrap();
+                let file = PuffinFileReader::new(r);
+                let reader = file.into_blob_reader(&blob_metadata);
+                Ok(Box::new(reader) as _)
+            }),
         }
     }
 }
