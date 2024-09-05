@@ -989,12 +989,15 @@ dependencies = [
  "itertools 0.12.1",
  "lazy_static",
  "lazycell",
+ "log",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
  "rustc-hash 1.1.0",
  "shlex",
  "syn 2.0.66",
+ "which",
 ]
 
 [[package]]
@@ -4271,7 +4274,6 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 [[package]]
 name = "greptime-proto"
 version = "0.1.0"
-source = "git+https://github.com/GreptimeTeam/greptime-proto.git?rev=c437b55725b7f5224fe9d46db21072b4a682ee4b#c437b55725b7f5224fe9d46db21072b4a682ee4b"
 dependencies = [
  "prost 0.12.6",
  "serde",
@@ -6383,6 +6385,7 @@ dependencies = [
  "tokio-util",
  "toml 0.8.14",
  "uuid",
+ "vsag-sys",
 ]
 
 [[package]]
@@ -13076,6 +13079,15 @@ name = "volatile"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8e76fae08f03f96e166d2dfda232190638c10e0383841252416f9cfe2ae60e6"
+
+[[package]]
+name = "vsag-sys"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "cmake",
+ "libc",
+]
 
 [[package]]
 name = "walkdir"

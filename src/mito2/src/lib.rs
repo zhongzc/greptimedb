@@ -172,3 +172,67 @@ mod worker;
 /// The [RegionManifestManager](crate::manifest::manager::RegionManifestManager) manages metadata of the engine.
 ///
 mod docs {}
+
+
+#[test]
+fn test_vsag() {
+    //     let index = VsagIndex::new(
+        //         "hnsw",
+        //         r#"{
+        //     "dtype": "float32",
+        //     "metric_type": "l2",
+        //     "dim": 128,
+        //     "hnsw": {
+        //         "max_degree": 16,
+        //         "ef_construction": 100
+        //     }
+        // }"#,
+        //     )
+        //     .unwrap();
+
+        let index = vsag_sys::VsagIndex::new(
+            "diskann",
+            r#"{
+                "dtype": "float32",
+                "metric_type": "l2",
+                "dim": 128,
+                "diskann": {
+                    "max_degree": 16,
+                    "ef_construction": 100,
+                    "pq_dims": 32,
+                    "pq_sample_rate": 0.5
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let num_vectors: usize = 3000;
+        let dim: usize = 128;
+
+        let ids: Vec<i64> = (0..num_vectors as i64).collect();
+        let vectors: Vec<f32> = (0..num_vectors * dim).map(|_| rand::random()).collect();
+
+        let failed_ids = index.build(num_vectors, dim, &ids, &vectors).unwrap();
+        assert_eq!(failed_ids.len(), 0);
+
+        let query_vector: Vec<f32> = (0..dim).map(|_| rand::random()).collect();
+        let k = 10;
+        // let search_params = r#"{
+        //   "hnsw": {
+        //     "ef_search": 100
+        //   }
+        // }"#;
+        let search_params = r#"{
+            "diskann": {
+              "ef_search": 100,
+              "beam_search": 4,
+              "io_limit": 200
+            }
+          }"#;
+        let output = index.knn_search(&query_vector, k, search_params).unwrap();
+        assert_eq!(output.ids.len(), k.min(num_vectors));
+        assert_eq!(output.distances.len(), k.min(num_vectors));
+
+        println!("{:?}", output.ids);
+        println!("{:?}", output.distances);
+}

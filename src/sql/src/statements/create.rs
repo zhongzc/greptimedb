@@ -108,6 +108,8 @@ pub struct Column {
 pub struct ColumnExtensions {
     /// Fulltext options.
     pub fulltext_options: Option<OptionMap>,
+    /// Vector options.
+    pub vector_options: Option<OptionMap>,
 }
 
 impl Column {
@@ -134,6 +136,12 @@ impl Column {
 
 impl Display for Column {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(vector_options) = &self.extensions.vector_options {
+            let dim = vector_options.get("dim").unwrap();
+            write!(f, "{} VECTOR({})", self.column_def.name, dim)?;
+            return Ok(());
+        }
+
         write!(f, "{}", self.column_def)?;
         if let Some(fulltext_options) = &self.extensions.fulltext_options {
             if !fulltext_options.is_empty() {

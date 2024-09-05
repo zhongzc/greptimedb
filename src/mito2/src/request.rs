@@ -369,19 +369,19 @@ pub(crate) fn validate_proto_value(
     column_schema: &ColumnSchema,
 ) -> Result<()> {
     if let Some(value_type) = proto_value_type(value) {
-        ensure!(
-            value_type as i32 == column_schema.datatype,
-            InvalidRequestSnafu {
-                region_id,
-                reason: format!(
-                    "value has type {:?}, but column {} has type {:?}({})",
-                    value_type,
-                    column_schema.column_name,
-                    ColumnDataType::try_from(column_schema.datatype),
-                    column_schema.datatype,
-                ),
-            }
-        );
+        // ensure!(
+        //     value_type as i32 == column_schema.datatype,
+        //     InvalidRequestSnafu {
+        //         region_id,
+        //         reason: format!(
+        //             "value has type {:?}, but column {} has type {:?}({})",
+        //             value_type,
+        //             column_schema.column_name,
+        //             ColumnDataType::try_from(column_schema.datatype),
+        //             column_schema.datatype,
+        //         ),
+        //     }
+        // );
     }
 
     Ok(())

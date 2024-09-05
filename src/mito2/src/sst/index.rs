@@ -17,6 +17,7 @@ mod indexer;
 pub(crate) mod intermediate;
 pub(crate) mod inverted_index;
 pub(crate) mod puffin_manager;
+pub(crate) mod vector_index;
 mod statistics;
 mod store;
 

@@ -484,6 +484,7 @@ pub fn to_null_scalar_value(output_type: &ConcreteDataType) -> Result<ScalarValu
         ConcreteDataType::Time(t) => time_to_scalar_value(t.unit(), None)?,
         ConcreteDataType::Duration(d) => duration_to_scalar_value(d.unit(), None),
         ConcreteDataType::Decimal128(d) => ScalarValue::Decimal128(None, d.precision(), d.scale()),
+        ConcreteDataType::Vector(_) => ScalarValue::Utf8(None),
     })
 }
 

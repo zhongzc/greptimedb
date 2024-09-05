@@ -70,6 +70,7 @@ impl SortField {
             ConcreteDataType::Float64(_) => 9,
             ConcreteDataType::Binary(_) => 11,
             ConcreteDataType::String(_) => 11, // a non-empty string takes at least 11 bytes.
+            ConcreteDataType::Vector(_) => 11,
             ConcreteDataType::Date(_) => 5,
             ConcreteDataType::DateTime(_) => 9,
             ConcreteDataType::Timestamp(_) => 10,
@@ -146,7 +147,8 @@ impl SortField {
             Time, time,
             Interval, interval,
             Duration, duration,
-            Decimal128, decimal128
+            Decimal128, decimal128,
+            Vector, string
         );
 
         Ok(())
@@ -213,7 +215,8 @@ impl SortField {
             DateTime, DateTime,
             Interval, Interval,
             Duration, Duration,
-            Decimal128, Decimal128
+            Decimal128, Decimal128,
+            Vector, String
         )
     }
 
@@ -249,7 +252,7 @@ impl SortField {
                 deserializer.advance(to_skip);
                 return Ok(to_skip);
             }
-            ConcreteDataType::String(_) => {
+            ConcreteDataType::String(_) | ConcreteDataType::Vector(_) => {
                 let pos_before = deserializer.position();
                 deserializer.advance(1);
                 deserializer

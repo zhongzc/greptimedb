@@ -45,7 +45,7 @@ use datatypes::schema::{ColumnDefaultConstraint, ColumnSchema, COMMENT_KEY};
 use datatypes::types::{cast, TimestampType};
 use datatypes::value::{OrderedF32, OrderedF64, Value};
 use snafu::{ensure, OptionExt, ResultExt};
-use sqlparser::ast::{ExactNumberInfo, UnaryOperator};
+use sqlparser::ast::{ExactNumberInfo, Ident, ObjectName, UnaryOperator};
 
 use crate::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, DataType as SqlDataType, Expr, TimezoneInfo,
@@ -124,6 +124,7 @@ fn parse_string_to_value(
             }
         }
         ConcreteDataType::Binary(_) => Ok(Value::Binary(s.as_bytes().into())),
+        ConcreteDataType::Vector(_) => Ok(Value::String(s.into())),
         _ => {
             unreachable!()
         }
@@ -571,6 +572,12 @@ pub fn sql_data_type_to_concrete_data_type(data_type: &SqlDataType) -> Result<Co
                 Ok(ConcreteDataType::decimal128_datatype(*p as u8, *s as i8))
             }
         },
+        SqlDataType::Custom(name, d)
+            if name.0.as_slice() == &[Ident::new("vector")] && d.len() == 1 =>
+        {
+            let dim = d[0].parse().unwrap();
+            Ok(ConcreteDataType::vector_datatype(dim))
+        }
         _ => error::SqlTypeNotSupportedSnafu {
             t: data_type.clone(),
         }
@@ -589,6 +596,10 @@ pub fn concrete_data_type_to_sql_data_type(data_type: &ConcreteDataType) -> Resu
         ConcreteDataType::Int8(_) => Ok(SqlDataType::TinyInt(None)),
         ConcreteDataType::UInt8(_) => Ok(SqlDataType::UnsignedTinyInt(None)),
         ConcreteDataType::String(_) => Ok(SqlDataType::String(None)),
+        ConcreteDataType::Vector(d) => Ok(SqlDataType::Custom(
+            ObjectName(vec![Ident::new("VECTOR")]),
+            vec![d.dim.to_string()],
+        )),
         ConcreteDataType::Float32(_) => Ok(SqlDataType::Float(None)),
         ConcreteDataType::Float64(_) => Ok(SqlDataType::Double),
         ConcreteDataType::Boolean(_) => Ok(SqlDataType::Boolean),
@@ -1382,6 +1393,9 @@ mod tests {
                         ),
                     ])
                     .into(),
+                ),
+                vector_options: Some(
+                    HashMap::from_iter([("dim".to_string(), "128".to_string())]).into(),
                 ),
             },
         };

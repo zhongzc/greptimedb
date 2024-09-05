@@ -93,16 +93,16 @@ impl ColumnDefaultConstraint {
                 if !v.is_null() {
                     // Whether the value could be nullable has been checked before, only need
                     // to check the type compatibility here.
-                    ensure!(
-                        data_type.logical_type_id() == v.logical_type_id(),
-                        error::DefaultValueTypeSnafu {
-                            reason: format!(
-                                "column has type {:?} but default value has type {:?}",
-                                data_type.logical_type_id(),
-                                v.logical_type_id()
-                            ),
-                        }
-                    );
+                    // ensure!(
+                    //     data_type.logical_type_id() == v.logical_type_id(),
+                    //     error::DefaultValueTypeSnafu {
+                    //         reason: format!(
+                    //             "column has type {:?} but default value has type {:?}",
+                    //             data_type.logical_type_id(),
+                    //             v.logical_type_id()
+                    //         ),
+                    //     }
+                    // );
                 }
             }
         }

@@ -154,6 +154,9 @@ fn equal(lhs: &dyn Vector, rhs: &dyn Vector) -> bool {
         Decimal128(_) => {
             is_vector_eq!(Decimal128Vector, lhs, rhs)
         }
+        Vector(_) => {
+            is_vector_eq!(StringVector, lhs, rhs)
+        }
     }
 }
 

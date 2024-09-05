@@ -138,6 +138,12 @@ pub fn values(arrays: &[VectorRef]) -> Result<Values> {
             string_values,
             |x| { x.into() }
         ),
+        (
+            ConcreteDataType::Vector(_),
+            StringVector,
+            string_values,
+            |x| { x.into() }
+        ),
         (ConcreteDataType::Date(_), DateVector, date_values, |x| {
             x.val()
         }),

@@ -35,14 +35,14 @@ use datatypes::vectors::{
     TimestampMillisecondVector, TimestampNanosecondVector, TimestampSecondVector, UInt32Vector,
     UInt64Vector, VectorRef,
 };
-use greptime_proto::v1;
 use greptime_proto::v1::column_data_type_extension::TypeExt;
 use greptime_proto::v1::ddl_request::Expr;
 use greptime_proto::v1::greptime_request::Request;
 use greptime_proto::v1::query_request::Query;
 use greptime_proto::v1::value::ValueData;
 use greptime_proto::v1::{
-    ColumnDataTypeExtension, DdlRequest, DecimalTypeExtension, QueryRequest, Row, SemanticType,
+    self, ColumnDataTypeExtension, DdlRequest, DecimalTypeExtension, QueryRequest, Row,
+    SemanticType, VectorTypeExtension,
 };
 use paste::paste;
 use snafu::prelude::*;
@@ -135,6 +135,18 @@ impl From<ColumnDataTypeWrapper> for ConcreteDataType {
                     ConcreteDataType::decimal128_datatype(d.precision as u8, d.scale as i8)
                 } else {
                     ConcreteDataType::decimal128_default_datatype()
+                }
+            }
+            ColumnDataType::Vector => {
+                if let Some(TypeExt::VectorType(d)) = datatype_wrapper
+                    .datatype_ext
+                    .as_ref()
+                    .and_then(|ext| ext.type_ext.as_ref())
+                {
+                    ConcreteDataType::vector_datatype(d.dim as _)
+                } else {
+                    // ConcreteDataType::vector_default_datatype()
+                    panic!("Vector type must have a dimension")
                 }
             }
         }
@@ -258,6 +270,7 @@ impl TryFrom<ConcreteDataType> for ColumnDataTypeWrapper {
                 IntervalType::MonthDayNano(_) => ColumnDataType::IntervalMonthDayNano,
             },
             ConcreteDataType::Decimal128(_) => ColumnDataType::Decimal128,
+            ConcreteDataType::Vector(_) => ColumnDataType::Vector,
             ConcreteDataType::Null(_)
             | ConcreteDataType::List(_)
             | ConcreteDataType::Dictionary(_)
@@ -273,6 +286,15 @@ impl TryFrom<ConcreteDataType> for ColumnDataTypeWrapper {
                         type_ext: Some(TypeExt::DecimalType(DecimalTypeExtension {
                             precision: decimal_type.precision() as i32,
                             scale: decimal_type.scale() as i32,
+                        })),
+                    })
+            }
+            ColumnDataType::Vector => {
+                datatype
+                    .as_vector()
+                    .map(|vector_type| ColumnDataTypeExtension {
+                        type_ext: Some(TypeExt::VectorType(VectorTypeExtension {
+                            dim: vector_type.dim as _,
                         })),
                     })
             }
@@ -393,6 +415,10 @@ pub fn values_with_capacity(datatype: ColumnDataType, capacity: usize) -> Values
         },
         ColumnDataType::Decimal128 => Values {
             decimal128_values: Vec::with_capacity(capacity),
+            ..Default::default()
+        },
+        ColumnDataType::Vector => Values {
+            string_values: Vec::with_capacity(capacity),
             ..Default::default()
         },
     }
@@ -595,6 +621,7 @@ pub fn pb_values_to_vector_ref(data_type: &ConcreteDataType, values: Values) -> 
         ConcreteDataType::Float64(_) => Arc::new(Float64Vector::from_vec(values.f64_values)),
         ConcreteDataType::Binary(_) => Arc::new(BinaryVector::from(values.binary_values)),
         ConcreteDataType::String(_) => Arc::new(StringVector::from_vec(values.string_values)),
+        ConcreteDataType::Vector(_) => Arc::new(StringVector::from_vec(values.string_values)),
         ConcreteDataType::Date(_) => Arc::new(DateVector::from_vec(values.date_values)),
         ConcreteDataType::DateTime(_) => Arc::new(DateTimeVector::from_vec(values.datetime_values)),
         ConcreteDataType::Timestamp(unit) => match unit {
@@ -668,6 +695,11 @@ pub fn pb_values_to_values(data_type: &ConcreteDataType, values: Values) -> Vec<
             .map(|val| val.into())
             .collect(),
         ConcreteDataType::String(_) => values
+            .string_values
+            .into_iter()
+            .map(|val| val.into())
+            .collect(),
+        ConcreteDataType::Vector(_) => values
             .string_values
             .into_iter()
             .map(|val| val.into())

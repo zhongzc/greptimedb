@@ -81,6 +81,34 @@ pub enum ConcreteDataType {
     // Compound types:
     List(ListType),
     Dictionary(DictionaryType),
+    Vector(VectorType),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct VectorType {
+    pub dim: usize,
+}
+
+impl DataType for VectorType {
+    /// Name of this data type.
+    fn name(&self) -> String {
+        format!("Vector({})", self.dim)
+    }
+    fn logical_type_id(&self) -> LogicalTypeId {
+        StringType {}.logical_type_id()
+    }
+    fn default_value(&self) -> Value {
+        StringType {}.default_value()
+    }
+    fn as_arrow_type(&self) -> ArrowDataType {
+        StringType {}.as_arrow_type()
+    }
+    fn create_mutable_vector(&self, capacity: usize) -> Box<dyn MutableVector> {
+        StringType {}.create_mutable_vector(capacity)
+    }
+    fn try_cast(&self, from: Value) -> Option<Value> {
+        StringType {}.try_cast(from)
+    }
 }
 
 impl fmt::Display for ConcreteDataType {
@@ -128,6 +156,7 @@ impl fmt::Display for ConcreteDataType {
             ConcreteDataType::Decimal128(v) => write!(f, "{}", v.name()),
             ConcreteDataType::List(v) => write!(f, "{}", v.name()),
             ConcreteDataType::Dictionary(v) => write!(f, "{}", v.name()),
+            ConcreteDataType::Vector(v) => write!(f, "{}", v.name()),
         }
     }
 }
@@ -162,6 +191,7 @@ impl ConcreteDataType {
                 | ConcreteDataType::Duration(_)
                 | ConcreteDataType::Decimal128(_)
                 | ConcreteDataType::Binary(_)
+                | ConcreteDataType::Vector(_)
         )
     }
 
@@ -312,6 +342,13 @@ impl ConcreteDataType {
     pub fn as_decimal128(&self) -> Option<Decimal128Type> {
         match self {
             ConcreteDataType::Decimal128(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    pub fn as_vector(&self) -> Option<VectorType> {
+        match self {
+            ConcreteDataType::Vector(v) => Some(*v),
             _ => None,
         }
     }
@@ -545,6 +582,14 @@ impl ConcreteDataType {
 
     pub fn decimal128_default_datatype() -> ConcreteDataType {
         Self::decimal128_datatype(DECIMAL128_MAX_PRECISION, DECIMAL_DEFAULT_SCALE)
+    }
+
+    pub fn vector_datatype(dim: usize) -> ConcreteDataType {
+        ConcreteDataType::Vector(VectorType { dim })
+    }
+
+    pub fn vector_default_datatype() -> ConcreteDataType {
+        Self::vector_datatype(128)
     }
 }
 
