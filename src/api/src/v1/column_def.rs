@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 use datatypes::schema::{
     ColumnDefaultConstraint, ColumnSchema, FulltextOptions, COMMENT_KEY, FULLTEXT_KEY,
+    VECTOR_INDEX_KEY,
 };
 use snafu::ResultExt;
 
@@ -25,6 +26,7 @@ use crate::v1::{ColumnDef, ColumnOptions, SemanticType};
 
 /// Key used to store fulltext options in gRPC column options.
 const FULLTEXT_GRPC_KEY: &str = "fulltext";
+const VECOTOR_INDEX_GRPC_KEY: &str = "vector_index";
 
 /// Tries to construct a `ColumnSchema` from the given  `ColumnDef`.
 pub fn try_as_column_schema(column_def: &ColumnDef) -> Result<ColumnSchema> {
@@ -54,6 +56,11 @@ pub fn try_as_column_schema(column_def: &ColumnDef) -> Result<ColumnSchema> {
     {
         metadata.insert(FULLTEXT_KEY.to_string(), fulltext.to_string());
     }
+    if let Some(options) = column_def.options.as_ref()
+        && let Some(vector_index) = options.options.get(VECOTOR_INDEX_GRPC_KEY)
+    {
+        metadata.insert(VECTOR_INDEX_KEY.to_string(), vector_index.to_string());
+    }
 
     ColumnSchema::new(&column_def.name, data_type.into(), column_def.is_nullable)
         .with_metadata(metadata)
@@ -71,6 +78,11 @@ pub fn options_from_column_schema(column_schema: &ColumnSchema) -> Option<Column
         options
             .options
             .insert(FULLTEXT_GRPC_KEY.to_string(), fulltext.to_string());
+    }
+    if let Some(vector_index) = column_schema.metadata().get(VECTOR_INDEX_KEY) {
+        options
+            .options
+            .insert(VECOTOR_INDEX_GRPC_KEY.to_string(), vector_index.to_string());
     }
 
     (!options.options.is_empty()).then_some(options)

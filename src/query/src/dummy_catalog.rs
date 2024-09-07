@@ -32,7 +32,7 @@ use datatypes::arrow::datatypes::SchemaRef;
 use snafu::ResultExt;
 use store_api::metadata::RegionMetadataRef;
 use store_api::region_engine::RegionEngineRef;
-use store_api::storage::{RegionId, ScanRequest, TimeSeriesRowSelector};
+use store_api::storage::{RegionId, ScanRequest, TimeSeriesRowSelector, VectorSearch};
 use table::table::scan::RegionScanExec;
 
 use crate::error::{GetRegionMetadataSnafu, Result};
@@ -226,6 +226,10 @@ impl DummyTableProvider {
     /// Sets the time series selector hint of the query to the provider.
     pub fn with_time_series_selector_hint(&self, selector: TimeSeriesRowSelector) {
         self.scan_request.lock().unwrap().series_row_selector = Some(selector);
+    }
+
+    pub fn with_vector_search_hint(&self, vector_search: VectorSearch) {
+        self.scan_request.lock().unwrap().vector_search = Some(vector_search);
     }
 
     /// Gets the scan request of the provider.

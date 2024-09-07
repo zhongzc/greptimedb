@@ -15,6 +15,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use datafusion_expr::expr::Alias;
 use datafusion_expr::utils::exprlist_to_columns;
 use datafusion_expr::{Expr, LogicalPlan, UserDefinedLogicalNode};
 use promql::extension_plan::{
@@ -159,11 +160,12 @@ impl Categorizer {
             | Expr::ScalarSubquery(_)
             | Expr::Wildcard { .. } => Commutativity::Unimplemented,
 
-            Expr::Alias(_)
-            | Expr::Unnest(_)
+            Expr::Unnest(_)
             | Expr::GroupingSet(_)
             | Expr::Placeholder(_)
             | Expr::OuterReferenceColumn(_, _) => Commutativity::Unimplemented,
+
+            Expr::Alias(Alias { expr, .. }) => Self::check_expr(expr),
         }
     }
 

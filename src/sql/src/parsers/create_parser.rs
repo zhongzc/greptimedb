@@ -61,10 +61,22 @@ fn validate_database_option(key: &str) -> bool {
 pub const COLUMN_FULLTEXT_OPT_KEY_ANALYZER: &str = "analyzer";
 pub const COLUMN_FULLTEXT_OPT_KEY_CASE_SENSITIVE: &str = "case_sensitive";
 
+pub const COLUMN_VECTOR_INDEX_OPT_KEY_TYPE: &str = "index_type";
+
+pub const COLUMN_VECTOR_INDEX_OPT_KEY_METRIC: &str = "metric";
+
 fn validate_column_fulltext_option(key: &str) -> bool {
     [
         COLUMN_FULLTEXT_OPT_KEY_ANALYZER,
         COLUMN_FULLTEXT_OPT_KEY_CASE_SENSITIVE,
+    ]
+    .contains(&key)
+}
+
+fn validate_column_vector_index_option(key: &str) -> bool {
+    [
+        COLUMN_VECTOR_INDEX_OPT_KEY_TYPE,
+        COLUMN_VECTOR_INDEX_OPT_KEY_METRIC,
     ]
     .contains(&key)
 }
@@ -693,7 +705,7 @@ impl<'a> ParserContext<'a> {
     ) -> Result<bool> {
         if let DataType::Custom(name, tokens) = column_type
             && name.0.len() == 1
-            && &name.0[0].value.to_uppercase() == "VECTOR"
+            && name.0[0].value.eq_ignore_ascii_case("vector")
         {
             ensure!(
                 tokens.len() == 1,
@@ -712,8 +724,24 @@ impl<'a> ParserContext<'a> {
                         msg: "dimension should be a positive integer",
                     })?;
 
-            let options = HashMap::from_iter([("dim".to_string(), dimension.to_string())]);
-            column_extensions.vector_options = Some(options.into());
+            let options = parser
+                .parse_options(Keyword::WITH)
+                .context(error::SyntaxSnafu)?
+                .into_iter()
+                .map(parse_option_string)
+                .collect::<Result<HashMap<String, String>>>()?;
+
+            for key in options.keys() {
+                ensure!(
+                    validate_column_vector_index_option(key),
+                    InvalidColumnOptionSnafu {
+                        name: column_name.to_string(),
+                        msg: format!("invalid VECTOR index option: {key}"),
+                    }
+                );
+            }
+
+            column_extensions.vector_index_options = Some(options.into());
         }
 
         if parser.parse_keyword(Keyword::FULLTEXT) {

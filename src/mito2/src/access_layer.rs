@@ -148,6 +148,7 @@ impl AccessLayer {
                 file_id,
                 file_path: index_file_path,
                 metadata: &request.metadata,
+                region_dir: self.region_dir.clone(),
                 row_group_size: write_opts.row_group_size,
                 puffin_manager: self.puffin_manager_factory.build(store),
                 intermediate_manager: self.intermediate_manager.clone(),

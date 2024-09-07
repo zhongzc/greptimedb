@@ -31,6 +31,8 @@ pub use pow::PowFunction;
 pub use rate::RateFunction;
 use snafu::ResultExt;
 
+use super::cos_distance::CosDistranceFunction;
+use super::l2sq_distance::L2SqrDistranceFunction;
 use crate::function::{Function, FunctionContext};
 use crate::function_registry::FunctionRegistry;
 use crate::scalars::math::modulo::ModuloFunction;
@@ -44,6 +46,8 @@ impl MathFunction {
         registry.register(Arc::new(RateFunction));
         registry.register(Arc::new(RangeFunction));
         registry.register(Arc::new(ClampFunction));
+        registry.register(Arc::new(L2SqrDistranceFunction));
+        registry.register(Arc::new(CosDistranceFunction));
     }
 }
 

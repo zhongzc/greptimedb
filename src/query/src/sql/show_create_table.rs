@@ -26,7 +26,10 @@ use sql::dialect::GreptimeDbDialect;
 use sql::parser::ParserContext;
 use sql::statements::create::{Column, ColumnExtensions, CreateTable, TIME_INDEX};
 use sql::statements::{self, OptionMap};
-use sql::{COLUMN_FULLTEXT_OPT_KEY_ANALYZER, COLUMN_FULLTEXT_OPT_KEY_CASE_SENSITIVE};
+use sql::{
+    COLUMN_FULLTEXT_OPT_KEY_ANALYZER, COLUMN_FULLTEXT_OPT_KEY_CASE_SENSITIVE,
+    COLUMN_VECTOR_INDEX_OPT_KEY_METRIC, COLUMN_VECTOR_INDEX_OPT_KEY_TYPE,
+};
 use sqlparser::ast::KeyOrIndexDisplay;
 use store_api::metric_engine_consts::{is_metric_engine, is_metric_engine_internal_column};
 use table::metadata::{TableInfoRef, TableMeta};
@@ -108,6 +111,21 @@ fn create_column(column_schema: &ColumnSchema, quote_style: char) -> Result<Colu
             ),
         ]);
         extensions.fulltext_options = Some(map.into());
+    }
+    if let Some(opt) = column_schema.vector_index_options().unwrap()
+        && opt.enable
+    {
+        let map = HashMap::from([
+            (
+                COLUMN_VECTOR_INDEX_OPT_KEY_TYPE.to_string(),
+                opt.index_type.to_string(),
+            ),
+            (
+                COLUMN_VECTOR_INDEX_OPT_KEY_METRIC.to_string(),
+                opt.metric.to_string(),
+            ),
+        ]);
+        extensions.vector_index_options = Some(map.into());
     }
 
     Ok(Column {

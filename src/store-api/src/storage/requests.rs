@@ -23,7 +23,7 @@ pub enum TimeSeriesRowSelector {
     LastRow,
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct ScanRequest {
     /// Indices of columns to read, `None` to read all columns. This indices is
     /// based on table schema.
@@ -39,4 +39,14 @@ pub struct ScanRequest {
     pub limit: Option<usize>,
     /// Optional hint to select rows from time-series.
     pub series_row_selector: Option<TimeSeriesRowSelector>,
+
+    pub vector_search: Option<VectorSearch>,
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct VectorSearch {
+    pub metric: String,
+    pub vector: Vec<f32>,
+    pub top_k: usize,
+    pub column: String,
 }

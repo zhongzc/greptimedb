@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use core::panic;
 use std::collections::HashSet;
 
 use api::v1::SemanticType;
@@ -19,11 +20,12 @@ use arrow_schema::SortOptions;
 use common_recordbatch::OrderOption;
 use datafusion::datasource::DefaultTableSource;
 use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion, TreeNodeVisitor};
-use datafusion_common::{Column, Result as DataFusionResult};
+use datafusion_common::{Column, Result as DataFusionResult, ScalarValue};
 use datafusion_expr::expr::Sort;
-use datafusion_expr::{utils, Expr, LogicalPlan};
+use datafusion_expr::{utils, Expr, LogicalPlan, Projection, Sort as SortExpr};
 use datafusion_optimizer::{OptimizerConfig, OptimizerRule};
-use store_api::storage::TimeSeriesRowSelector;
+use datatypes::prelude::ConcreteDataType;
+use store_api::storage::{TimeSeriesRowSelector, VectorSearch};
 
 use crate::dummy_catalog::DummyTableProvider;
 
@@ -96,6 +98,10 @@ impl ScanHintRule {
                             );
                         }
 
+                        if let Some(vector_search) = &visitor.vector_search {
+                            Self::set_vector_search_hint(adapter, vector_search.clone());
+                        }
+
                         transformed = true;
                     }
                 }
@@ -159,6 +165,21 @@ impl ScanHintRule {
             adapter.with_time_series_selector_hint(TimeSeriesRowSelector::LastRow);
         }
     }
+
+    fn set_vector_search_hint(adapter: &DummyTableProvider, vector_search: VectorSearch) {
+        let region_metadata = adapter.region_metadata();
+        let column = &vector_search.column;
+        let Some(column) = region_metadata.column_by_name(column) else {
+            panic!("column not found");
+        };
+        let ConcreteDataType::Vector(v) = column.column_schema.data_type else {
+            panic!("column is not a vector");
+        };
+        if v.dim != vector_search.vector.len() {
+            panic!("vector dimension mismatch");
+        }
+        adapter.with_vector_search_hint(vector_search);
+    }
 }
 
 /// Traverse and fetch hints.
@@ -170,6 +191,8 @@ struct ScanHintVisitor {
     /// This field stores saved `group_by` columns when all aggregate functions are `last_value`
     /// and the `order_by` column which should be time index.
     ts_row_selector: Option<(HashSet<Column>, Column)>,
+
+    vector_search: Option<VectorSearch>,
 }
 
 impl TreeNodeVisitor<'_> for ScanHintVisitor {
@@ -186,6 +209,71 @@ impl TreeNodeVisitor<'_> for ScanHintVisitor {
             }
             self.order_expr = Some(exprs);
         }
+
+        fn vector_search_hint(node: &LogicalPlan, vector_search: &mut Option<VectorSearch>) {
+            if let LogicalPlan::Sort(SortExpr { expr, input, fetch }) = node {
+                let Some(k) = fetch else {
+                    return;
+                };
+                if expr.len() != 1 {
+                    return;
+                }
+                let expr = &expr[0];
+                let Expr::Sort(Sort { expr, asc, .. }) = expr else {
+                    return;
+                };
+                if !asc {
+                    return;
+                }
+                let Some(c) = expr.try_as_col() else {
+                    return;
+                };
+
+                match input.as_ref() {
+                    LogicalPlan::Projection(Projection { expr, .. }) => {
+                        for e in expr {
+                            if let Expr::Alias(alias) = e {
+                                if let Expr::ScalarFunction(func) = alias.expr.as_ref() {
+                                    if func.name().eq_ignore_ascii_case("cos_distance")
+                                        || func.name().eq_ignore_ascii_case("l2sq_distance")
+                                    {
+                                        if alias.name == c.name {
+                                            let func_name = func.name().to_ascii_lowercase();
+                                            let column =
+                                                func.args[0].try_as_col().unwrap().name.clone();
+                                            let query_vector =
+                                                if let Expr::Literal(lit) = &func.args[1] {
+                                                    match lit {
+                                                        ScalarValue::Utf8(Some(s)) => s.clone(),
+                                                        _ => return,
+                                                    }
+                                                } else {
+                                                    return;
+                                                };
+                                            let vector = query_vector
+                                                .trim_matches(|c| c == '[' || c == ']')
+                                                .split(',')
+                                                .map(|s| s.trim().parse::<f32>().unwrap())
+                                                .collect::<Vec<f32>>();
+                                            let top_k = *k;
+
+                                            *vector_search = Some(VectorSearch {
+                                                metric: func_name,
+                                                column,
+                                                vector,
+                                                top_k,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => return,
+                }
+            }
+        }
+        vector_search_hint(node, &mut self.vector_search);
 
         // Get time series row selector from aggr plan
         if let LogicalPlan::Aggregate(aggregate) = node {
@@ -274,7 +362,8 @@ impl TreeNodeVisitor<'_> for ScanHintVisitor {
 
 impl ScanHintVisitor {
     fn need_rewrite(&self) -> bool {
-        self.order_expr.is_some() || self.ts_row_selector.is_some()
+        // self.order_expr.is_some() || self.ts_row_selector.is_some() || self.vector_search.is_some()
+        true
     }
 }
 

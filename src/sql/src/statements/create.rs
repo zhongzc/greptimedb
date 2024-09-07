@@ -15,7 +15,9 @@
 use std::fmt::{Display, Formatter};
 
 use common_catalog::consts::FILE_ENGINE;
-use datatypes::schema::{FulltextAnalyzer, FulltextOptions};
+use datatypes::schema::{
+    FulltextAnalyzer, FulltextOptions, VectorIndexMetric, VectorIndexOptions, VectorIndexType,
+};
 use itertools::Itertools;
 use sqlparser::ast::{ColumnOptionDef, DataType, Expr, Query};
 use sqlparser_derive::{Visit, VisitMut};
@@ -24,7 +26,10 @@ use crate::ast::{ColumnDef, Ident, ObjectName, TableConstraint, Value as SqlValu
 use crate::error::{FulltextInvalidOptionSnafu, Result};
 use crate::statements::statement::Statement;
 use crate::statements::OptionMap;
-use crate::{COLUMN_FULLTEXT_OPT_KEY_ANALYZER, COLUMN_FULLTEXT_OPT_KEY_CASE_SENSITIVE};
+use crate::{
+    COLUMN_FULLTEXT_OPT_KEY_ANALYZER, COLUMN_FULLTEXT_OPT_KEY_CASE_SENSITIVE,
+    COLUMN_VECTOR_INDEX_OPT_KEY_METRIC, COLUMN_VECTOR_INDEX_OPT_KEY_TYPE,
+};
 
 const LINE_SEP: &str = ",\n";
 const COMMA_SEP: &str = ", ";
@@ -109,7 +114,7 @@ pub struct ColumnExtensions {
     /// Fulltext options.
     pub fulltext_options: Option<OptionMap>,
     /// Vector options.
-    pub vector_options: Option<OptionMap>,
+    pub vector_index_options: Option<OptionMap>,
 }
 
 impl Column {
@@ -136,12 +141,6 @@ impl Column {
 
 impl Display for Column {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Some(vector_options) = &self.extensions.vector_options {
-            let dim = vector_options.get("dim").unwrap();
-            write!(f, "{} VECTOR({})", self.column_def.name, dim)?;
-            return Ok(());
-        }
-
         write!(f, "{}", self.column_def)?;
         if let Some(fulltext_options) = &self.extensions.fulltext_options {
             if !fulltext_options.is_empty() {
@@ -149,6 +148,12 @@ impl Display for Column {
                 write!(f, " FULLTEXT WITH({})", format_list_comma!(options))?;
             } else {
                 write!(f, " FULLTEXT")?;
+            }
+        }
+        if let Some(vector_index_options) = &self.extensions.vector_index_options {
+            if !vector_index_options.is_empty() {
+                let options = vector_index_options.kv_pairs();
+                write!(f, " WITH({})", format_list_comma!(options))?;
             }
         }
         Ok(())
@@ -191,6 +196,43 @@ impl ColumnExtensions {
         }
 
         Ok(Some(fulltext))
+    }
+
+    pub fn build_vector_index_options(&self) -> Result<Option<VectorIndexOptions>> {
+        let Some(options) = self.vector_index_options.as_ref() else {
+            return Ok(None);
+        };
+
+        let mut vector = VectorIndexOptions {
+            enable: true,
+            ..Default::default()
+        };
+        if let Some(typ) = options.get(COLUMN_VECTOR_INDEX_OPT_KEY_TYPE) {
+            match typ.to_ascii_lowercase().as_str() {
+                "hnsw" => vector.index_type = VectorIndexType::Hnsw,
+                "diskann" => vector.index_type = VectorIndexType::Diskann,
+                _ => {
+                    return FulltextInvalidOptionSnafu {
+                        msg: format!("{typ}, expected: 'hnsw' | 'diskann'"),
+                    }
+                    .fail();
+                }
+            }
+        }
+        if let Some(metric) = options.get(COLUMN_VECTOR_INDEX_OPT_KEY_METRIC) {
+            match metric.to_ascii_lowercase().as_str() {
+                "l2sq" => vector.metric = VectorIndexMetric::L2sq,
+                "cos" => vector.metric = VectorIndexMetric::Cosine,
+                _ => {
+                    return FulltextInvalidOptionSnafu {
+                        msg: format!("{metric}, expected: 'l2sq' | 'cos'"),
+                    }
+                    .fail();
+                }
+            }
+        }
+
+        Ok(Some(vector))
     }
 }
 

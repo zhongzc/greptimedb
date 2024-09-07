@@ -29,6 +29,9 @@ impl Indexer {
         if !self.do_update_fulltext_index(batch).await {
             self.do_abort().await;
         }
+        if let Some(v) = self.vector_indexer.as_mut() {
+            v.update(batch);
+        }
     }
 
     /// Returns false if the update failed.

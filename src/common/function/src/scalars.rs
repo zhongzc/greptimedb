@@ -13,8 +13,10 @@
 // limitations under the License.
 
 pub mod aggregate;
+pub mod cos_distance;
 pub(crate) mod date;
 pub mod expression;
+pub mod l2sq_distance;
 pub mod matches;
 pub mod math;
 pub mod numpy;

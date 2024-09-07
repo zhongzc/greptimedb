@@ -17,9 +17,9 @@ mod indexer;
 pub(crate) mod intermediate;
 pub(crate) mod inverted_index;
 pub(crate) mod puffin_manager;
-pub(crate) mod vector_index;
 mod statistics;
 mod store;
+pub(crate) mod vector_index;
 
 use std::num::NonZeroUsize;
 
@@ -28,6 +28,7 @@ use puffin_manager::SstPuffinManager;
 use statistics::{ByteCount, RowCount};
 use store_api::metadata::RegionMetadataRef;
 use store_api::storage::{ColumnId, RegionId};
+use vector_index::VectorIndexer;
 
 use crate::access_layer::OperationType;
 use crate::config::{FulltextIndexConfig, InvertedIndexConfig};
@@ -81,12 +82,14 @@ pub struct Indexer {
     file_id: FileId,
     file_path: String,
     region_id: RegionId,
+    region_dir: String,
 
     puffin_manager: Option<SstPuffinManager>,
     inverted_indexer: Option<InvertedIndexer>,
     last_mem_inverted_index: usize,
     fulltext_indexer: Option<FulltextIndexer>,
     last_mem_fulltext_index: usize,
+    vector_indexer: Option<VectorIndexer>,
 }
 
 impl Indexer {
@@ -137,6 +140,7 @@ pub(crate) struct IndexerBuilder<'a> {
     pub(crate) op_type: OperationType,
     pub(crate) file_id: FileId,
     pub(crate) file_path: String,
+    pub(crate) region_dir: String,
     pub(crate) metadata: &'a RegionMetadataRef,
     pub(crate) row_group_size: usize,
     pub(crate) puffin_manager: SstPuffinManager,
@@ -153,6 +157,7 @@ impl<'a> IndexerBuilder<'a> {
             file_id: self.file_id,
             file_path: self.file_path.clone(),
             region_id: self.metadata.region_id,
+            region_dir: self.region_dir.clone(),
 
             ..Default::default()
         };
@@ -163,6 +168,7 @@ impl<'a> IndexerBuilder<'a> {
             indexer.abort().await;
             return Indexer::default();
         }
+        indexer.vector_indexer = VectorIndexer::new(self.metadata);
 
         indexer.puffin_manager = Some(self.puffin_manager);
         indexer
@@ -378,6 +384,7 @@ mod tests {
             op_type: OperationType::Flush,
             file_id: FileId::random(),
             file_path: "test".to_string(),
+            region_dir: "test".to_string(),
             metadata: &metadata,
             row_group_size: 1024,
             puffin_manager: factory.build(mock_object_store()),
@@ -407,6 +414,7 @@ mod tests {
             op_type: OperationType::Flush,
             file_id: FileId::random(),
             file_path: "test".to_string(),
+            region_dir: "test".to_string(),
             metadata: &metadata,
             row_group_size: 1024,
             puffin_manager: factory.build(mock_object_store()),
@@ -428,6 +436,7 @@ mod tests {
             op_type: OperationType::Compact,
             file_id: FileId::random(),
             file_path: "test".to_string(),
+            region_dir: "test".to_string(),
             metadata: &metadata,
             row_group_size: 1024,
             puffin_manager: factory.build(mock_object_store()),
@@ -460,6 +469,7 @@ mod tests {
             op_type: OperationType::Flush,
             file_id: FileId::random(),
             file_path: "test".to_string(),
+            region_dir: "test".to_string(),
             metadata: &metadata,
             row_group_size: 1024,
             puffin_manager: factory.build(mock_object_store()),
@@ -482,6 +492,7 @@ mod tests {
             op_type: OperationType::Flush,
             file_id: FileId::random(),
             file_path: "test".to_string(),
+            region_dir: "test".to_string(),
             metadata: &metadata,
             row_group_size: 1024,
             puffin_manager: factory.build(mock_object_store()),
@@ -511,6 +522,7 @@ mod tests {
             op_type: OperationType::Flush,
             file_id: FileId::random(),
             file_path: "test".to_string(),
+            region_dir: "test".to_string(),
             metadata: &metadata,
             row_group_size: 0,
             puffin_manager: factory.build(mock_object_store()),

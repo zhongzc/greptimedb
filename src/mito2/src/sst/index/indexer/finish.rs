@@ -46,6 +46,21 @@ impl Indexer {
             return IndexOutput::default();
         }
 
+        if let Some(v) = self.vector_indexer.take() {
+            let vector_index_path = self.file_id.as_vector_index(&self.region_dir);
+            let path = vector_index_path.clone();
+            let _ = common_runtime::spawn_blocking_global(move || {
+                v.finish(&path);
+            })
+            .await;
+            common_telemetry::info!(
+                "Vector index created, region_id: {}, file_id: {}, path: {}",
+                self.region_id,
+                self.file_id,
+                vector_index_path
+            );
+        }
+
         output.file_size = self.do_finish_puffin_writer(writer).await;
         output
     }

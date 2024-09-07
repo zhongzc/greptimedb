@@ -64,6 +64,10 @@ impl FileId {
         format!("{}{}", self, ".puffin")
     }
 
+    pub fn as_vector_index(&self, region_dir: &str) -> String {
+        format!("/tmp/greptimedb/{region_dir}index/{}{}", self, ".vector")
+    }
+
     /// Converts [FileId] as byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()

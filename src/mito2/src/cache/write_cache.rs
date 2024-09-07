@@ -128,6 +128,7 @@ impl WriteCache {
             file_id,
             file_path: self.file_cache.cache_file_path(puffin_key),
             metadata: &write_request.metadata,
+            region_dir: "".to_string(),
             row_group_size: write_opts.row_group_size,
             puffin_manager: self.puffin_manager_factory.build(store),
             intermediate_manager: self.intermediate_manager.clone(),

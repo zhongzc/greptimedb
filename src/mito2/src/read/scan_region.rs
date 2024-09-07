@@ -49,6 +49,7 @@ use crate::sst::index::fulltext_index::applier::builder::FulltextIndexApplierBui
 use crate::sst::index::fulltext_index::applier::FulltextIndexApplierRef;
 use crate::sst::index::inverted_index::applier::builder::InvertedIndexApplierBuilder;
 use crate::sst::index::inverted_index::applier::InvertedIndexApplierRef;
+use crate::sst::index::vector_index::{VectorIndexApplier, VectorIndexApplierRef};
 use crate::sst::parquet::file_range::FileRange;
 use crate::sst::parquet::reader::ReaderMetrics;
 
@@ -294,6 +295,18 @@ impl ScanRegion {
 
         let inverted_index_applier = self.build_invereted_index_applier();
         let fulltext_index_applier = self.build_fulltext_index_applier();
+        let vector_index_applier = self
+            .request
+            .vector_search
+            .take()
+            .map(|v| {
+                VectorIndexApplier::arc(
+                    self.access_layer.region_dir().to_string(),
+                    v,
+                    &self.version.metadata,
+                )
+            })
+            .flatten();
         let predicate = Predicate::new(self.request.filters.clone());
         // The mapper always computes projected column ids as the schema of SSTs may change.
         let mapper = match &self.request.projection {
@@ -309,6 +322,7 @@ impl ScanRegion {
             .with_cache(self.cache_manager)
             .with_inverted_index_applier(inverted_index_applier)
             .with_fulltext_index_applier(fulltext_index_applier)
+            .with_vector_index_applier(vector_index_applier)
             .with_parallelism(self.parallelism)
             .with_start_time(self.start_time)
             .with_append_mode(self.version.options.append_mode)
@@ -439,6 +453,7 @@ pub(crate) struct ScanInput {
     /// Index appliers.
     inverted_index_applier: Option<InvertedIndexApplierRef>,
     fulltext_index_applier: Option<FulltextIndexApplierRef>,
+    vector_index_applier: Option<VectorIndexApplierRef>,
     /// Start time of the query.
     pub(crate) query_start: Option<Instant>,
     /// The region is using append mode.
@@ -467,6 +482,7 @@ impl ScanInput {
             parallelism: ScanParallism::default(),
             inverted_index_applier: None,
             fulltext_index_applier: None,
+            vector_index_applier: None,
             query_start: None,
             append_mode: false,
             filter_deleted: true,
@@ -541,6 +557,15 @@ impl ScanInput {
         applier: Option<FulltextIndexApplierRef>,
     ) -> Self {
         self.fulltext_index_applier = applier;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_vector_index_applier(
+        mut self,
+        applier: Option<VectorIndexApplierRef>,
+    ) -> Self {
+        self.vector_index_applier = applier;
         self
     }
 
@@ -621,6 +646,7 @@ impl ScanInput {
                 .cache(self.cache_manager.clone())
                 .inverted_index_applier(self.inverted_index_applier.clone())
                 .fulltext_index_applier(self.fulltext_index_applier.clone())
+                .vector_index_applier(self.vector_index_applier.clone())
                 .expected_metadata(Some(self.mapper.metadata().clone()))
                 .build_reader_input(&mut reader_metrics)
                 .await;

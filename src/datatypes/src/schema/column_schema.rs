@@ -21,6 +21,7 @@ use snafu::{ensure, ResultExt};
 
 use crate::data_type::{ConcreteDataType, DataType};
 use crate::error::{self, Error, Result};
+use crate::prelude::Vector;
 use crate::schema::constraint::ColumnDefaultConstraint;
 use crate::value::Value;
 use crate::vectors::VectorRef;
@@ -34,6 +35,7 @@ pub const COMMENT_KEY: &str = "greptime:storage:comment";
 const DEFAULT_CONSTRAINT_KEY: &str = "greptime:default_constraint";
 /// Key used to store fulltext options in arrow field's metadata.
 pub const FULLTEXT_KEY: &str = "greptime:fulltext";
+pub const VECTOR_INDEX_KEY: &str = "greptime:vector_index";
 
 /// Schema of a column, used as an immutable struct.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +257,25 @@ impl ColumnSchema {
         }
     }
 
+    pub fn vector_index_options(&self) -> Result<Option<VectorIndexOptions>> {
+        match self.metadata.get(VECTOR_INDEX_KEY) {
+            None => Ok(None),
+            Some(json) => {
+                let options =
+                    serde_json::from_str(json).context(error::DeserializeSnafu { json })?;
+                Ok(Some(options))
+            }
+        }
+    }
+
+    pub fn with_vector_index_options(mut self, options: VectorIndexOptions) -> Result<Self> {
+        self.metadata.insert(
+            VECTOR_INDEX_KEY.to_string(),
+            serde_json::to_string(&options).context(error::SerializeSnafu)?,
+        );
+        Ok(self)
+    }
+
     pub fn with_fulltext_options(mut self, options: FulltextOptions) -> Result<Self> {
         self.metadata.insert(
             FULLTEXT_KEY.to_string(),
@@ -330,6 +351,52 @@ pub struct FulltextOptions {
     /// Whether the fulltext index is case-sensitive.
     #[serde(default)]
     pub case_sensitive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct VectorIndexOptions {
+    pub enable: bool,
+    #[serde(default)]
+    pub index_type: VectorIndexType,
+    #[serde(default)]
+    pub metric: VectorIndexMetric,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VectorIndexType {
+    #[default]
+    #[serde(rename = "hnsw")]
+    Hnsw,
+    #[serde(rename = "diskann")]
+    Diskann,
+}
+
+impl fmt::Display for VectorIndexType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VectorIndexType::Hnsw => write!(f, "hnsw"),
+            VectorIndexType::Diskann => write!(f, "diskann"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VectorIndexMetric {
+    #[default]
+    #[serde(rename = "cos")]
+    Cosine,
+    #[serde(rename = "l2sq")]
+    L2sq,
+}
+
+impl fmt::Display for VectorIndexMetric {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VectorIndexMetric::L2sq => write!(f, "l2sq"),
+            VectorIndexMetric::Cosine => write!(f, "cos"),
+        }
+    }
 }
 
 /// Fulltext analyzer.

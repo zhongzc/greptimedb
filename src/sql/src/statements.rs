@@ -469,6 +469,12 @@ pub fn column_to_schema(
             .context(SetFulltextOptionSnafu)?;
     }
 
+    if let Some(options) = column.extensions.build_vector_index_options()? {
+        column_schema = column_schema
+            .with_vector_index_options(options)
+            .context(SetFulltextOptionSnafu)?;
+    }
+
     Ok(column_schema)
 }
 
@@ -573,7 +579,9 @@ pub fn sql_data_type_to_concrete_data_type(data_type: &SqlDataType) -> Result<Co
             }
         },
         SqlDataType::Custom(name, d)
-            if name.0.as_slice() == &[Ident::new("vector")] && d.len() == 1 =>
+            if name.0.len() == 1
+                && name.0[0].value.to_ascii_uppercase() == "VECTOR"
+                && d.len() == 1 =>
         {
             let dim = d[0].parse().unwrap();
             Ok(ConcreteDataType::vector_datatype(dim))
@@ -1394,7 +1402,7 @@ mod tests {
                     ])
                     .into(),
                 ),
-                vector_options: Some(
+                vector_index_options: Some(
                     HashMap::from_iter([("dim".to_string(), "128".to_string())]).into(),
                 ),
             },

@@ -56,6 +56,7 @@ use crate::row_converter::{McmpRowCodec, SortField};
 use crate::sst::file::FileHandle;
 use crate::sst::index::fulltext_index::applier::FulltextIndexApplierRef;
 use crate::sst::index::inverted_index::applier::InvertedIndexApplierRef;
+use crate::sst::index::vector_index::VectorIndexApplierRef;
 use crate::sst::parquet::file_range::{FileRangeContext, FileRangeContextRef};
 use crate::sst::parquet::format::ReadFormat;
 use crate::sst::parquet::metadata::MetadataLoader;
@@ -86,6 +87,7 @@ pub struct ParquetReaderBuilder {
     /// Index appliers.
     inverted_index_applier: Option<InvertedIndexApplierRef>,
     fulltext_index_applier: Option<FulltextIndexApplierRef>,
+    vector_index_applier: Option<VectorIndexApplierRef>,
     /// Expected metadata of the region while reading the SST.
     /// This is usually the latest metadata of the region. The reader use
     /// it get the correct column id of a column by name.
@@ -109,6 +111,7 @@ impl ParquetReaderBuilder {
             cache_manager: None,
             inverted_index_applier: None,
             fulltext_index_applier: None,
+            vector_index_applier: None,
             expected_metadata: None,
         }
     }
@@ -160,6 +163,15 @@ impl ParquetReaderBuilder {
         index_applier: Option<FulltextIndexApplierRef>,
     ) -> Self {
         self.fulltext_index_applier = index_applier;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn vector_index_applier(
+        mut self,
+        index_applier: Option<VectorIndexApplierRef>,
+    ) -> Self {
+        self.vector_index_applier = index_applier;
         self
     }
 
@@ -365,6 +377,12 @@ impl ParquetReaderBuilder {
             return output;
         }
 
+        self.prune_row_groups_by_vector_index(row_group_size, parquet_meta, &mut output, metrics)
+            .await;
+        if output.is_empty() {
+            return output;
+        }
+
         let inverted_filtered = self
             .prune_row_groups_by_inverted_index(row_group_size, parquet_meta, &mut output, metrics)
             .await;
@@ -415,6 +433,31 @@ impl ParquetReaderBuilder {
             }
         };
 
+        let row_group_to_row_ids =
+            Self::group_row_ids(apply_res, row_group_size, parquet_meta.num_row_groups());
+        Self::prune_row_groups_by_rows(
+            parquet_meta,
+            row_group_to_row_ids,
+            output,
+            &mut metrics.num_row_groups_fulltext_index_filtered,
+            &mut metrics.num_rows_in_row_group_fulltext_index_filtered,
+        );
+
+        true
+    }
+
+    async fn prune_row_groups_by_vector_index(
+        &self,
+        row_group_size: usize,
+        parquet_meta: &ParquetMetaData,
+        output: &mut BTreeMap<usize, Option<RowSelection>>,
+        metrics: &mut ReaderFilterMetrics,
+    ) -> bool {
+        let Some(index_applier) = &self.vector_index_applier else {
+            return false;
+        };
+
+        let apply_res = index_applier.apply(self.file_handle.file_id());
         let row_group_to_row_ids =
             Self::group_row_ids(apply_res, row_group_size, parquet_meta.num_row_groups());
         Self::prune_row_groups_by_rows(
