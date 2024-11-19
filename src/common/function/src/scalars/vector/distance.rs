@@ -28,7 +28,7 @@ use crate::function::{Function, FunctionContext};
 use crate::helper;
 
 macro_rules! define_distance_function {
-    ($StructName:ident, $display_name:expr, $similarity_method:ident) => {
+    ($StructName:ident, $display_name:expr, $similarity_method:ident, $post_process:expr) => {
 
         /// A function calculates the distance between two vectors.
 
@@ -104,6 +104,7 @@ macro_rules! define_distance_function {
                         let f = <f32 as simsimd::SpatialSimilarity>::$similarity_method;
                         // Safe: checked if the length of the vectors match
                         let d = f(vec0.as_ref(), vec1.as_ref()).unwrap();
+                        let d = $post_process(d);
                         result.push(Some(d));
                     } else {
                         result.push_null();
@@ -122,9 +123,16 @@ macro_rules! define_distance_function {
     }
 }
 
-define_distance_function!(CosDistanceFunction, "cos_distance", cos);
-define_distance_function!(L2SqDistanceFunction, "l2sq_distance", l2sq);
-define_distance_function!(DotProductFunction, "dot_product", dot);
+// TODO(zhongzc): cos distance should be in [0, 2].
+// Simsimd's bug, it may return -0.0, reported here: https://github.com/ashvardanian/SimSIMD/issues/195
+// But we can't upgrade because of https://github.com/ashvardanian/SimSIMD/issues/235, so fix it here for now.
+define_distance_function!(CosDistanceFunction, "cos_distance", cos, |i| if i < 0.0 {
+    0.0
+} else {
+    i
+});
+define_distance_function!(L2SqDistanceFunction, "l2sq_distance", l2sq, |i| i);
+define_distance_function!(DotProductFunction, "dot_product", dot, |i| i);
 
 /// Parse a vector value if the value is a constant string.
 fn parse_if_constant_string(arg: &Arc<dyn Vector>) -> Result<Option<Vec<f32>>> {
@@ -212,6 +220,7 @@ fn parse_f32_vector_from_string(s: &str) -> Result<Vec<f32>> {
 mod tests {
     use std::sync::Arc;
 
+    use datatypes::value::Value;
     use datatypes::vectors::{BinaryVector, ConstantVector, StringVector};
 
     use super::*;
@@ -465,5 +474,36 @@ mod tests {
         let invalid_bytes = [0, 0, 128];
         let result = binary_as_vector(&invalid_bytes);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_positive_cos_distance() {
+        let vec1 = Arc::new(BinaryVector::from(vec![
+            Some(vec![0, 0, 0, 0, 0, 0, 128, 63]),
+            Some(vec![0, 0, 128, 63, 0, 0, 0, 0]),
+        ])) as VectorRef;
+        let vec2 = vec1.clone();
+
+        let result = CosDistanceFunction
+            .eval(FunctionContext::default(), &[vec1, vec2])
+            .unwrap();
+
+        let d0 = result.get(0);
+        match d0 {
+            Value::Float64(d) => {
+                assert!(d.0 >= 0.0);
+                assert!((d.0 - 0.0).abs() < f64::EPSILON);
+            }
+            _ => panic!("Expect a float64 value"),
+        }
+
+        let d1 = result.get(1);
+        match d1 {
+            Value::Float64(d) => {
+                assert!(d.0 >= 0.0);
+                assert!((d.0 - 0.0).abs() < f64::EPSILON);
+            }
+            _ => panic!("Expect a float64 value"),
+        }
     }
 }
