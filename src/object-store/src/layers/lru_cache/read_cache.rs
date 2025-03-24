@@ -20,7 +20,7 @@ use moka::future::Cache;
 use moka::notification::ListenerFuture;
 use moka::policy::EvictionPolicy;
 use opendal::raw::oio::{Read, Reader, Write};
-use opendal::raw::{oio, Access, OpDelete, OpRead, OpStat, OpWrite, RpRead};
+use opendal::raw::{oio, Access, BytesRange, OpDelete, OpRead, OpStat, OpWrite, RpRead};
 use opendal::{Error as OpendalError, ErrorKind, OperatorBuilder, Result};
 
 use crate::metrics::{
@@ -33,6 +33,9 @@ const RECOVER_CACHE_LIST_CONCURRENT: usize = 8;
 ///
 /// This must contain three layers, corresponding to [`build_prometheus_metrics_layer`](object_store::layers::build_prometheus_metrics_layer).
 const READ_CACHE_DIR: &str = "cache/object/read";
+
+/// The size of each block to read from cache. (8MB)
+const READ_CACHE_BLOCK_SIZE: u64 = 8 * 1024 * 1024;
 
 /// Cache value for read file
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -212,13 +215,78 @@ impl<C: Access> ReadCache<C> {
             return inner.read(path, args).await.map(to_output_reader);
         }
 
-        let read_key = read_cache_key(path, &args);
+        // Pattern 0: read to end, read the whole file as a block from cache.
+        //
+        // TODO: Consider reading the whole file directly from remote storage instead of caching?
+        //
+        //       When network bandwidth is comparable to disk bandwidth, this approach could be better because:
+        //         1. Avoids unnecessary disk I/O (write and read) for first-time access
+        //         2. Saves disk space by not caching the entire file
+        //         3. Reduces cache management overhead
+        //
+        //       The trade-off is losing cache benefits for subsequent reads, but if network latency is not critical,
+        //       this could be a more efficient approach.
+        if args.range().size().is_none() {
+            return self
+                .read_block_from_cache(inner, path, args, OpRead::default())
+                .await;
+        }
+
+        // Pattern 1: read a certain range
+        //
+        // 1. Split the range into 8MB aligned blocks.
+        // 2. Read each block from cache.
+        // 3. Merge the blocks into a single reader.
+        let range = args.range();
+        let start = range.offset();
+        let end = start + range.size().unwrap(); // Satety: not None
+
+        let mut blocks = Vec::with_capacity(((end - start) / READ_CACHE_BLOCK_SIZE) as usize + 1);
+
+        let block_index_start = start / READ_CACHE_BLOCK_SIZE;
+        let block_index_end = end.div_ceil(READ_CACHE_BLOCK_SIZE);
+
+        for block_index in block_index_start..block_index_end {
+            let block_start = block_index * READ_CACHE_BLOCK_SIZE;
+            let block_end = ((block_index + 1) * READ_CACHE_BLOCK_SIZE).min(end); // avoid read beyond end
+
+            let remote_range = BytesRange::new(block_start, Some(block_end - block_start));
+            let remote_args = args.clone().with_range(remote_range);
+
+            let read_start = start.max(block_start);
+            let local_range =
+                BytesRange::new(read_start - block_start, Some(block_end - read_start));
+            let local_args = args.clone().with_range(local_range);
+
+            let (_, block_reader) = self
+                .read_block_from_cache(inner, path, remote_args, local_args)
+                .await?;
+            blocks.push(block_reader);
+        }
+
+        let merged_reader = MergeReader::new(blocks);
+        let merged_reader = Box::new(merged_reader);
+
+        Ok((RpRead::default(), merged_reader))
+    }
+
+    async fn read_block_from_cache<I>(
+        &self,
+        inner: &I,
+        path: &str,
+        remote_args: OpRead,
+        local_args: OpRead,
+    ) -> Result<(RpRead, Reader)>
+    where
+        I: Access,
+    {
+        let read_key = read_cache_key(path, &remote_args);
 
         let read_result = self
             .mem_cache
             .try_get_with(
                 read_key.clone(),
-                self.read_remote(inner, &read_key, path, args.clone()),
+                self.read_remote(inner, &read_key, path, remote_args.clone()),
             )
             .await
             .map_err(|e| OpendalError::new(e.kind(), e.to_string()))?;
@@ -227,7 +295,7 @@ impl<C: Access> ReadCache<C> {
             ReadResult::Success(_) => {
                 // There is a concurrent issue here, the local cache may be purged
                 // while reading, we have to fall back to remote read
-                match self.file_cache.read(&read_key, OpRead::default()).await {
+                match self.file_cache.read(&read_key, local_args).await {
                     Ok(ret) => {
                         OBJECT_STORE_LRU_CACHE_HIT
                             .with_label_values(&["success"])
@@ -236,7 +304,7 @@ impl<C: Access> ReadCache<C> {
                     }
                     Err(_) => {
                         OBJECT_STORE_LRU_CACHE_MISS.inc();
-                        inner.read(path, args).await.map(to_output_reader)
+                        inner.read(path, remote_args).await.map(to_output_reader)
                     }
                 }
             }
@@ -341,6 +409,38 @@ impl<C: Access, D: oio::Delete> oio::Delete for CacheAwareDeleter<C, D> {
 
 fn to_output_reader<R: Read + 'static>(input: (RpRead, R)) -> (RpRead, Reader) {
     (input.0, Box::new(input.1))
+}
+
+/// A reader that merges multiple readers into a single reader.
+/// It reads from each reader in sequence until all readers are exhausted.
+struct MergeReader {
+    readers: Vec<Reader>,
+    current_reader_idx: usize,
+}
+
+impl MergeReader {
+    fn new(readers: Vec<Reader>) -> Self {
+        Self {
+            readers,
+            current_reader_idx: 0,
+        }
+    }
+}
+
+impl Read for MergeReader {
+    async fn read(&mut self) -> Result<opendal::Buffer> {
+        loop {
+            if self.current_reader_idx >= self.readers.len() {
+                return Ok(opendal::Buffer::new());
+            }
+            let bytes = self.readers[self.current_reader_idx].read().await?;
+            if bytes.is_empty() {
+                self.current_reader_idx += 1;
+                continue;
+            }
+            return Ok(bytes);
+        }
+    }
 }
 
 #[cfg(test)]
